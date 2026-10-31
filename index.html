@@ -42,7 +42,9 @@
   @media (max-width: 600px) {
     #library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  .comic-card { cursor: pointer; }
+  .comic-card { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
+  .comic-card:focus { outline: none; }
+  .comic-card:focus-visible { outline: 2px solid #bbb; outline-offset: 4px; border-radius: 12px; }
   .comic-cover {
     width: 100%; aspect-ratio: 2/3; border-radius: 12px; background: #1c1c1f;
     display: flex; align-items: center; justify-content: center; overflow: hidden;
@@ -63,7 +65,6 @@
   .progress-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
   .progress-track-fill { height: 100%; background: #2b6fff; }
   .comic-card.selectable .comic-cover { opacity: 0.85; }
-  .comic-card.selected .comic-cover { outline: 3px solid #2b6fff; outline-offset: 2px; }
   .selection-checkmark {
     display: none; position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;
     background: rgba(0,0,0,0.6); border: 2px solid #fff; align-items: center; justify-content: center;
@@ -208,6 +209,13 @@
   #choose-comic-file[hidden], #cache-notice[hidden] { display: none; }
   #cache-notice { position: fixed; top: max(16px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 80; display: flex; align-items: center; gap: 12px; width: min(90vw, 480px); background: #28282e; color: white; border: 1px solid #555; border-radius: 12px; padding: 14px; font-size: 14px; box-shadow: 0 4px 20px #0008; }
   #cache-notice-close { background: none; color: white; border: 0; padding: 8px; cursor: pointer; }
+  #finished-dialog { width: min(90vw, 420px); box-sizing: border-box; padding: 24px; border: 1px solid #414148; border-radius: 16px; color: #eee; background: #18181d; }
+  #finished-dialog::backdrop { background: rgba(0,0,0,.75); }
+  #finished-dialog h2 { margin: 0 0 14px; font-size: 21px; }
+  #finished-dialog p { line-height: 1.5; }
+  #finished-dialog .backup-hint { color: #aaa; font-size: 14px; }
+  .finished-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  #finished-backup { background: var(--read-color); }
 </style>
 </head>
 <body>
@@ -265,6 +273,16 @@
   <button id="preview-read">Read</button>
 </dialog>
 
+<dialog id="finished-dialog" aria-labelledby="finished-title" aria-describedby="finished-description">
+  <h2 id="finished-title">Reading history saved</h2>
+  <p id="finished-description"></p>
+  <p class="backup-hint">You can also save a backup file for Restore History.</p>
+  <div class="finished-actions">
+    <button id="finished-close" class="history-button" autofocus>Close</button>
+    <button id="finished-backup" class="history-button">Save backup</button>
+  </div>
+</dialog>
+
 <div id="cache-notice" role="status" hidden>
   <span id="cache-notice-text"></span>
   <button id="cache-notice-close" aria-label="Dismiss storage message">✕</button>
@@ -294,7 +312,7 @@
       </div>
     </div>
   </div>
-  <button id="done-btn" hidden>Done! · Save backup</button>
+  <button id="done-btn" hidden>Done</button>
   <div id="loading-spinner">Loading page…</div>
   <div id="page-container">
     <img id="page-image-left" style="display:none;">
@@ -1434,6 +1452,12 @@ document.getElementById('done-btn').addEventListener('click', () => {
   saveHistory(history);
   menuLibraryBtn.click();
   refreshLibrary();
+  document.getElementById('finished-description').textContent = `${cardsByKey[key]?.querySelector('.comic-title').textContent || parseComicTitle(currentFile.name)} is marked as read on this iPad.`;
+  document.getElementById('finished-dialog').showModal();
+});
+document.getElementById('finished-close').addEventListener('click', () => document.getElementById('finished-dialog').close());
+document.getElementById('finished-backup').addEventListener('click', () => {
+  document.getElementById('finished-dialog').close();
   downloadHistory();
 });
 document.getElementById('restore-history-btn').addEventListener('click', () => document.getElementById('history-input').click());

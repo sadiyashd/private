@@ -175,13 +175,35 @@
   #comic-search { margin: 0 20px 8px; padding: 12px; border: 1px solid #444; border-radius: 10px; background: #18181c; color: white; font: inherit; }
   .comic-card[hidden] { display: none !important; }
   #library-grid { flex: none; overflow: visible; }
-  #completed-section { padding: 0 20px 32px; }
-  #completed-grid { display: flex; gap: 16px; overflow-x: auto; padding: 4px 4px 16px; }
-  #completed-grid .comic-card { flex: 0 0 clamp(180px, 28vw, 360px); }
-  #completed-grid.selecting .selection-checkmark { display: flex; }
+  #recent-section { padding: 0 20px 32px; }
+  #recent-grid { display: flex; gap: 12px; overflow-x: auto; padding: 4px 0 16px; }
+  #recent-grid .comic-card { flex: 0 0 calc((100vw - 88px) / 5); }
+  @media (orientation: landscape) {
+    #recent-grid .comic-card { flex-basis: calc((100vw - 100px) / 6); }
+  }
+  @media (max-width: 600px) {
+    #recent-grid .comic-card { flex-basis: calc((100vw - 64px) / 3); }
+  }
+  #recent-grid.selecting .selection-checkmark { display: flex; }
   .history-button { background: #25252b; color: white; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
   #done-btn { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); right: 20px; z-index: 12; background: #2b6fff; color: white; padding: 14px 22px; border: 0; border-radius: 12px; font-size: 17px; font-weight: 600; }
   #done-btn[hidden] { display: none; }
+  :root { --read-color: #269c68; --unread-color: #2b6fff; }
+  .comic-card.is-read .progress-track-fill { background: var(--read-color); }
+  #cover-preview { width: min(92vw, 760px); max-height: 94vh; max-height: 94dvh; padding: 18px; border: 1px solid #393940; border-radius: 18px; color: #eee; background: #141418; box-sizing: border-box; }
+  #cover-preview[open] { display: flex; flex-direction: column; gap: 12px; }
+  #cover-preview::backdrop { background: rgba(0,0,0,.85); }
+  #preview-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-shrink: 0; }
+  #preview-title { margin: 0; font-size: 20px; }
+  #preview-frame { position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; touch-action: pan-y; }
+  #preview-image { display: block; max-width: 100%; max-height: calc(90vh - 190px); max-height: calc(90dvh - 190px); object-fit: contain; }
+  .preview-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 52px; border: 1px solid #777; border-radius: 12px; font-size: 36px; background: rgba(0,0,0,.7); color: white; cursor: pointer; }
+  .preview-arrow:disabled { opacity: .25; cursor: default; }
+  #preview-previous { left: 4px; }
+  #preview-next { right: 4px; }
+  #preview-status { margin: 0; min-height: 18px; text-align: center; font-size: 14px; color: #aaa; flex-shrink: 0; }
+  #preview-read { flex-shrink: 0; background: var(--unread-color); border: 0; color: white; border-radius: 12px; padding: 14px; font-size: 18px; font-weight: 600; cursor: pointer; }
+  #preview-read.is-read { background: var(--read-color); }
 </style>
 </head>
 <body>
@@ -207,7 +229,7 @@
     <button id="restore-history-btn" class="history-button">Restore History</button>
     <input id="history-input" type="file" accept=".json,application/json" hidden>
   </div>
-  <p id="library-help">Tap a cover, then choose that comic from your USB drive or Files. You can also use ＋ to select several comics at once.</p>
+  <p id="library-help">Tap a cover to browse. Tap Read to choose its file from your USB drive or Files. You can also use ＋ to select several comics at once.</p>
   <input id="comic-search" type="search" placeholder="Find an issue…" aria-label="Find a comic by title or issue number">
   <div id="status" role="status" aria-live="polite"></div>
   <div id="library-empty">
@@ -215,15 +237,29 @@
     <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;">Choose Comics</label>
   </div>
   <div id="library-grid" style="display:none;"></div>
-  <section id="completed-section" hidden>
-    <h2>Completed</h2>
-    <div id="completed-grid"></div>
+  <section id="recent-section" hidden>
+    <h2>Recently Read</h2>
+    <div id="recent-grid"></div>
   </section>
   <div id="undo-toast">
     <span id="undo-toast-text">Comic removed</span>
     <button id="undo-toast-btn">Undo</button>
   </div>
 </div>
+
+<dialog id="cover-preview" aria-labelledby="preview-title">
+  <div id="preview-heading">
+    <h2 id="preview-title"></h2>
+    <button id="preview-close" class="icon-btn" aria-label="Close cover preview">✕</button>
+  </div>
+  <div id="preview-frame">
+    <button id="preview-previous" class="preview-arrow" aria-label="Previous cover">‹</button>
+    <img id="preview-image" alt="" draggable="false">
+    <button id="preview-next" class="preview-arrow" aria-label="Next cover">›</button>
+  </div>
+  <p id="preview-status" aria-live="polite"></p>
+  <button id="preview-read">Read</button>
+</dialog>
 
 <div id="selection-bar">
   <span id="selection-count">0 selected</span>
@@ -402,7 +438,7 @@ function enterSelectionMode() {
   selectionMode = true;
   selectedKeys.clear();
   libraryGrid.classList.add('selecting');
-  completedGrid.classList.add('selecting');
+  recentGrid.classList.add('selecting');
   selectionBar.classList.add('open');
   updateSelectionBar();
 }
@@ -411,9 +447,9 @@ function exitSelectionMode() {
   selectionMode = false;
   selectedKeys.clear();
   libraryGrid.classList.remove('selecting');
-  completedGrid.classList.remove('selecting');
+  recentGrid.classList.remove('selecting');
   selectionBar.classList.remove('open');
-  Object.values(cardsByKey).forEach(card => card.classList.remove('selected'));
+  document.querySelectorAll('.comic-card.selected').forEach(card => card.classList.remove('selected'));
 }
 
 function updateSelectionBar() {
@@ -429,6 +465,7 @@ function toggleCardSelection(key, card) {
     selectedKeys.add(key);
     card.classList.add('selected');
   }
+  syncSelectionCards();
   updateSelectionBar();
 }
 
@@ -450,9 +487,9 @@ selectionDeleteBtn.addEventListener('click', async () => {
 
 function onCardClick(key, card) {
   if (selectionMode) {
-    toggleCardSelection(key, card);
+    toggleCardSelection(key, cardsByKey[key] || card);
   } else {
-    handleCardTap(key);
+    openCoverPreview(key);
   }
 }
 
@@ -470,7 +507,7 @@ async function renderCachedLibrary() {
         const img = document.createElement('img');
         const url = URL.createObjectURL(entry.blob);
         img.src = url;
-        img.onload = img.onerror = () => URL.revokeObjectURL(url);
+        // Keep the cover URL alive so its full-size preview can be opened later.
         cover.replaceChildren(img);
         addCardSelectionMark(cover);
         card.addEventListener('click', () => onCardClick(key, card));
@@ -481,13 +518,19 @@ async function renderCachedLibrary() {
   } catch (error) {
     console.error('Could not read cover cache', error);
   }
-  refreshCompletedRow();
+  refreshLibrary();
 }
 
 function buildCard(title, key) {
   const card = document.createElement('div');
   card.className = 'comic-card';
   card.dataset.key = key;
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', `Preview ${title}`);
+  card.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onCardClick(key, cardsByKey[key] || card); }
+  });
 
   const cover = document.createElement('div');
   cover.className = 'comic-cover';
@@ -526,10 +569,11 @@ function addProgressBar(card, key, pageCount, progress) {
   history[key] = { ...history[key], title: card.querySelector('.comic-title').textContent, pageCount };
   if (pageCount > 0 && progress[key] >= pageCount - 1) history[key].completed = true;
   saveHistory(history);
-  queueMicrotask(refreshCompletedRow);
+  queueMicrotask(refreshLibrary);
   const track = card.querySelector('.progress-track');
   if (!track) return;
-  if (progress[key] === undefined || !pageCount || pageCount <= 1) {
+  card.classList.toggle('is-read', !!history[key]?.completed);
+  if (!history[key]?.completed && (progress[key] === undefined || !pageCount || pageCount <= 1)) {
     track.style.display = 'none';
     return;
   }
@@ -563,6 +607,8 @@ async function collectDeletionRecord(key) {
   const record = { key, coverEntry, progressValue, liveFile, historyEntry };
   if (isCatalogKey(key)) setCatalogHidden(key, true);
 
+  const coverURL = card.querySelector('.comic-cover img')?.src;
+  if (coverURL?.startsWith('blob:')) URL.revokeObjectURL(coverURL);
   card.remove();
   delete cardsByKey[key];
   if (liveFileIndex !== -1) libraryFiles.splice(liveFileIndex, 1);
@@ -601,7 +647,7 @@ async function deleteComics(keys) {
     libraryEmpty.style.display = 'flex';
   }
 
-  refreshCompletedRow();
+  refreshLibrary();
   showUndoToast(records.length);
 }
 
@@ -647,7 +693,7 @@ async function restoreComic(record) {
   const img = document.createElement('img');
   const url = URL.createObjectURL(coverEntry.blob);
   img.src = url;
-  img.onload = () => URL.revokeObjectURL(url);
+  // Cover previews reuse this URL for the lifetime of the library card.
   cover.appendChild(img);
   addCardSelectionMark(cover);
   const progress = loadProgress();
@@ -768,7 +814,7 @@ async function loadCoverThumbnail(file, card, coverEl, progress, key) {
     const url = URL.createObjectURL(blob);
     const img = document.createElement('img');
     img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
+    // Cover previews reuse this URL for the lifetime of the library card.
     if (!isCatalogKey(key)) { coverEl.replaceChildren(img); addCardSelectionMark(coverEl); }
     else URL.revokeObjectURL(url);
     addProgressBar(card, key, opened.pageNames.length, progress);
@@ -1047,12 +1093,11 @@ async function showSpread(spreadIdx) {
     const progress = loadProgress();
     progress[comicKey(myFile)] = pageIndices[0];
     saveProgress(progress);
-    if (pageIndices.includes(myArchive.pageNames.length - 1)) {
-      const history = loadHistory();
-      const key = comicKey(myFile);
-      history[key] = { ...history[key], title: parseComicTitle(myFile.name), pageCount: myArchive.pageNames.length, completed: true };
-      saveHistory(history);
-    }
+    const history = loadHistory();
+    const key = comicKey(myFile);
+    history[key] = { ...history[key], title: parseComicTitle(myFile.name), pageCount: myArchive.pageNames.length,
+      completed: !!(history[key]?.completed || pageIndices.includes(myArchive.pageNames.length - 1)), lastReadAt: Date.now() };
+    saveHistory(history);
     const card = cardsByKey[comicKey(myFile)];
     if (card) addProgressBar(card, comicKey(myFile), myArchive.pageNames.length, progress);
     document.getElementById('done-btn').hidden = spreadIdx !== spreads.length - 1;
@@ -1230,12 +1275,12 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 const HISTORY_KEY = 'usbComicReaderHistory';
-const completedGrid = document.getElementById('completed-grid');
+const recentGrid = document.getElementById('recent-grid');
 function loadHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || {}; } catch { return {}; }
 }
 function saveHistory(history) { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); }
-function refreshCompletedRow() {
+function refreshLibrary() {
   const history = loadHistory();
   const query = document.getElementById('comic-search').value.trim().toLowerCase();
   const numericQuery = /^\d+$/.test(query) ? Number(query) : null;
@@ -1249,11 +1294,25 @@ function refreshCompletedRow() {
     card.hidden = numericQuery !== null ? key !== `archie:${numericQuery}` && archieIssue(card.querySelector('.comic-title').textContent) !== numericQuery
       : !card.querySelector('.comic-title').textContent.toLowerCase().includes(query);
   }
-  for (const [target, completed] of [[libraryGrid, false], [completedGrid, true]]) {
-    const cards = entries.filter(([key]) => !!history[key]?.completed === completed).map(([, card]) => card);
-    cards.forEach((card, i) => { if (target.children[i] !== card) target.insertBefore(card, target.children[i] || null); });
-  }
-  document.getElementById('completed-section').hidden = ![...completedGrid.children].some(card => !card.hidden);
+  entries.forEach(([key, card], i) => {
+    card.classList.toggle('is-read', !!history[key]?.completed);
+    if (libraryGrid.children[i] !== card) libraryGrid.insertBefore(card, libraryGrid.children[i] || null);
+  });
+  const progress = loadProgress();
+  const recent = entries.filter(([key]) => history[key]?.lastReadAt || history[key]?.completed || progress[key] !== undefined)
+    .sort(([a], [b]) => (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0));
+  const recentCards = recent.map(([key, card]) => {
+    const copy = card.cloneNode(true);
+    copy.classList.add('recent-card');
+    copy.addEventListener('click', () => onCardClick(key, cardsByKey[key]));
+    copy.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onCardClick(key, cardsByKey[key]); }
+    });
+    return copy;
+  });
+  recentGrid.replaceChildren(...recentCards);
+  document.getElementById('recent-section').hidden = !recentCards.some(card => !card.hidden);
+  syncSelectionCards();
   libraryGrid.style.display = [...libraryGrid.children].some(card => !card.hidden) ? 'grid' : 'none';
   libraryEmpty.style.display = Object.keys(cardsByKey).length ? 'none' : 'flex';
 }
@@ -1272,7 +1331,7 @@ function renderHistoryCards() {
     }
     addProgressBar(card, key, entry.pageCount, progress);
   }
-  refreshCompletedRow();
+  refreshLibrary();
 }
 
 function downloadHistory() {
@@ -1294,10 +1353,10 @@ document.getElementById('done-btn').addEventListener('click', () => {
   progress[key] = currentArchive.pageNames.length - 1;
   saveProgress(progress);
   const history = loadHistory();
-  history[key] = { title: parseComicTitle(currentFile.name), pageCount: currentArchive.pageNames.length, completed: true };
+  history[key] = { title: parseComicTitle(currentFile.name), pageCount: currentArchive.pageNames.length, completed: true, lastReadAt: Date.now() };
   saveHistory(history);
   menuLibraryBtn.click();
-  refreshCompletedRow();
+  refreshLibrary();
   downloadHistory();
 });
 document.getElementById('restore-history-btn').addEventListener('click', () => document.getElementById('history-input').click());
@@ -1314,25 +1373,101 @@ document.getElementById('history-input').addEventListener('change', async (event
       if (!safeKey(key) || !Number.isSafeInteger(page) || page < 0) throw new Error('Invalid reading progress.');
     }
     for (const [key, comic] of Object.entries(data.comics)) {
-      if (!safeKey(key) || !isMap(comic) || typeof comic.title !== 'string' || !Number.isSafeInteger(comic.pageCount) || comic.pageCount < 1 || (comic.completed !== undefined && typeof comic.completed !== 'boolean')) throw new Error('Invalid comic history.');
+      if (!safeKey(key) || !isMap(comic) || typeof comic.title !== 'string' || !Number.isSafeInteger(comic.pageCount) || comic.pageCount < 1 || (comic.completed !== undefined && typeof comic.completed !== 'boolean') || (comic.lastReadAt !== undefined && (!Number.isSafeInteger(comic.lastReadAt) || comic.lastReadAt < 0))) throw new Error('Invalid comic history.');
     }
     const progress = loadProgress();
     const history = loadHistory();
     for (const [key, page] of Object.entries(data.progress)) progress[key] = Math.max(progress[key] || 0, page);
     for (const [key, comic] of Object.entries(data.comics)) {
-      history[key] = { title: comic.title, pageCount: comic.pageCount, completed: !!(history[key]?.completed || comic.completed) };
+      history[key] = { title: comic.title, pageCount: comic.pageCount, completed: !!(history[key]?.completed || comic.completed), lastReadAt: Math.max(history[key]?.lastReadAt || 0, comic.lastReadAt || 0) };
     }
     saveProgress(progress);
     saveHistory(history);
     renderHistoryCards();
-    refreshCompletedRow();
+    refreshLibrary();
     statusEl.textContent = 'History restored. Select the original comic files to read them again. Newer progress was kept.';
   } catch (error) {
     statusEl.textContent = 'Could not restore history: ' + error.message;
   } finally { event.target.value = ''; }
 });
-new MutationObserver(refreshCompletedRow).observe(libraryGrid, { childList: true });
-new MutationObserver(refreshCompletedRow).observe(completedGrid, { childList: true });
+new MutationObserver(refreshLibrary).observe(libraryGrid, { childList: true });
+
+
+function syncSelectionCards() {
+  document.querySelectorAll('.comic-card').forEach(card => card.classList.toggle('selected', selectedKeys.has(card.dataset.key)));
+}
+const coverPreview = document.getElementById('cover-preview');
+const previewImage = document.getElementById('preview-image');
+const previewRead = document.getElementById('preview-read');
+let previewKeys = [];
+let previewIndex = 0;
+let previewReturnFocus = null;
+function openCoverPreview(key) {
+  previewKeys = [...libraryGrid.children].filter(card => !card.hidden).map(card => card.dataset.key);
+  previewIndex = previewKeys.indexOf(key);
+  if (previewIndex < 0) { previewKeys = [key]; previewIndex = 0; }
+  previewReturnFocus = document.activeElement;
+  updateCoverPreview();
+  coverPreview.showModal();
+  document.getElementById('preview-close').focus();
+}
+function updateCoverPreview() {
+  const key = previewKeys[previewIndex];
+  const card = cardsByKey[key];
+  if (!card) { coverPreview.close(); return; }
+  const title = card.querySelector('.comic-title').textContent;
+  const image = card.querySelector('.comic-cover img');
+  previewImage.removeAttribute('src');
+  if (image) previewImage.src = image.src;
+  previewImage.alt = `${title} cover`;
+  document.getElementById('preview-title').textContent = title;
+  const read = !!loadHistory()[key]?.completed;
+  previewRead.classList.toggle('is-read', read);
+  document.getElementById('preview-status').textContent = read ? 'Already read' : 'Not yet completed';
+  document.getElementById('preview-previous').disabled = previewIndex === 0;
+  document.getElementById('preview-next').disabled = previewIndex === previewKeys.length - 1;
+}
+function browseCover(direction) {
+  const next = previewIndex + direction;
+  if (next < 0 || next >= previewKeys.length) return;
+  previewIndex = next; updateCoverPreview();
+}
+document.getElementById('preview-close').addEventListener('click', () => coverPreview.close());
+document.getElementById('preview-previous').addEventListener('click', () => browseCover(-1));
+document.getElementById('preview-next').addEventListener('click', () => browseCover(1));
+previewRead.addEventListener('click', () => {
+  const key = previewKeys[previewIndex];
+  coverPreview.close();
+  handleCardTap(key);
+});
+coverPreview.addEventListener('close', () => {
+  previewImage.removeAttribute('src');
+  if (previewReturnFocus?.isConnected) previewReturnFocus.focus({ preventScroll: true });
+});
+coverPreview.addEventListener('click', event => {
+  const rect = coverPreview.getBoundingClientRect();
+  if (event.target === coverPreview && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) coverPreview.close();
+});
+coverPreview.addEventListener('keydown', event => {
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault(); browseCover(event.key === 'ArrowLeft' ? -1 : 1);
+  }
+});
+let coverSwipeStart = null;
+const previewFrame = document.getElementById('preview-frame');
+previewFrame.addEventListener('pointerdown', event => {
+  if (event.target.closest('button')) return;
+  coverSwipeStart = { x: event.clientX, y: event.clientY };
+  previewFrame.setPointerCapture(event.pointerId);
+});
+previewFrame.addEventListener('pointerup', event => {
+  if (!coverSwipeStart) return;
+  const dx = event.clientX - coverSwipeStart.x;
+  const dy = event.clientY - coverSwipeStart.y;
+  coverSwipeStart = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.25) browseCover(dx < 0 ? 1 : -1);
+});
+previewFrame.addEventListener('pointercancel', () => { coverSwipeStart = null; });
 
 const CATALOG_HIDDEN_KEY = 'usbComicReaderHiddenCovers';
 const catalogIssues = new Set(typeof BUILTIN_ISSUES === 'undefined' ? [] : BUILTIN_ISSUES);
@@ -1378,12 +1513,12 @@ function migrateReadingHistory() {
   for (const [key, entry] of Object.entries(oldHistory)) {
     const target = canonicalComicKey(key, entry.title);
     const previous = history[target];
-    history[target] = { ...entry, completed: !!(previous?.completed || entry.completed), pageCount: Math.max(previous?.pageCount || 0, entry.pageCount || 0) };
+    history[target] = { ...entry, completed: !!(previous?.completed || entry.completed), lastReadAt: Math.max(previous?.lastReadAt || 0, entry.lastReadAt || 0), pageCount: Math.max(previous?.pageCount || 0, entry.pageCount || 0) };
   }
   saveProgress(progress);
   saveHistory(history);
 }
-document.getElementById('comic-search').addEventListener('input', refreshCompletedRow);
+document.getElementById('comic-search').addEventListener('input', refreshLibrary);
 fileInput.addEventListener('cancel', () => { pendingOpenKey = null; statusEl.textContent = ''; });
 let libraryBooted = false;
 async function bootApp() {

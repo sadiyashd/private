@@ -197,7 +197,6 @@
     <input type="file" id="file-input" accept="application/octet-stream,.cbz,.cbr,.zip,.rar" multiple>
   </div>
   <div style="display:flex;gap:8px;padding:10px 20px;flex-wrap:wrap;">
-    <button id="backup-history-btn" class="history-button">Save History Backup</button>
     <button id="restore-history-btn" class="history-button">Restore History</button>
     <input id="history-input" type="file" accept=".json,application/json" hidden>
   </div>
@@ -1256,7 +1255,6 @@ function downloadHistory() {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
   statusEl.textContent = 'Backup requested. Save comic-history.json in Files; choose Replace if offered. If a duplicate is created, keep the newest backup.';
 }
-document.getElementById('backup-history-btn').addEventListener('click', downloadHistory);
 document.getElementById('done-btn').addEventListener('click', () => {
   if (!currentFile || !currentArchive) return;
   const key = comicKey(currentFile);

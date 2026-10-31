@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Comics">
 <title>USB Comic Reader</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="covers/catalog.js"></script>
 <style>
   * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
   html, body {
@@ -166,7 +167,10 @@
   #selection-delete-btn:disabled { opacity: 0.4; }
 
   #library-screen { overflow-y: auto; }
-  #library-header { flex-wrap: wrap; gap: 10px; }
+  #library-header { flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
+  #library-help { margin: 0; padding: 0 20px 8px; color: #aaa; font-size: 13px; }
+  #comic-search { margin: 0 20px 8px; padding: 12px; border: 1px solid #444; border-radius: 10px; background: #18181c; color: white; font: inherit; }
+  .comic-card[hidden] { display: none !important; }
   #library-grid { flex: none; overflow: visible; }
   #completed-section { padding: 0 20px 32px; }
   #completed-grid { display: flex; gap: 16px; overflow-x: auto; padding: 4px 4px 16px; }
@@ -200,6 +204,8 @@
     <button id="restore-history-btn" class="history-button">Restore History</button>
     <input id="history-input" type="file" accept=".json,application/json" hidden>
   </div>
+  <p id="library-help">Tap a cover, then choose that comic from your USB drive or Files. You can also use ＋ to select several comics at once.</p>
+  <input id="comic-search" type="search" placeholder="Find an issue…" aria-label="Find a comic by title or issue number">
   <div id="status" role="status" aria-live="polite"></div>
   <div id="library-empty">
     <p>Select .cbz and .cbr files straight from your USB drive. They stay on the drive — nothing is copied to this iPad.</p>
@@ -320,7 +326,17 @@ function loadProgress() {
   try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)) || {}; } catch { return {}; }
 }
 function saveProgress(map) { localStorage.setItem(PROGRESS_KEY, JSON.stringify(map)); }
-function comicKey(file) { return `${file.name}_${file.size}`; }
+// Match this series only; Archie & Friends and other titles keep their own file keys.
+function archieIssue(name) {
+  const match = String(name).match(/^archie[\s._-]+#?0*(\d+)(?=$|[\s._(\[-])/i);
+  return match ? Number(match[1]) : null;
+}
+function canonicalComicKey(key, title = '') {
+  if (/^archie:\d+$/.test(key)) return key;
+  const issue = archieIssue(key) ?? archieIssue(title);
+  return issue === null ? key : `archie:${issue}`;
+}
+function comicKey(file) { return canonicalComicKey(`${file.name}_${file.size}`); }
 
 function loadSpreadMode() { return localStorage.getItem(SPREAD_MODE_KEY) === 'true'; }
 function saveSpreadMode(val) { localStorage.setItem(SPREAD_MODE_KEY, val ? 'true' : 'false'); }
@@ -438,42 +454,31 @@ function onCardClick(key, card) {
 }
 
 async function renderCachedLibrary() {
-  let cached;
   try {
-    cached = await getAllCachedCovers();
-  } catch (err) {
-    console.error('Could not read cover cache', err);
-    return;
+    const cached = await getAllCachedCovers();
+    const progress = loadProgress();
+    for (const entry of cached) {
+      const key = canonicalComicKey(entry.key, entry.title);
+      if (hiddenCatalogKeys().includes(key)) continue;
+      let card = cardsByKey[key];
+      if (!card) {
+        card = buildCard(parseComicTitle(entry.title), key);
+        const cover = card.querySelector('.comic-cover');
+        const img = document.createElement('img');
+        const url = URL.createObjectURL(entry.blob);
+        img.src = url;
+        img.onload = img.onerror = () => URL.revokeObjectURL(url);
+        cover.replaceChildren(img);
+        addCardSelectionMark(cover);
+        card.addEventListener('click', () => onCardClick(key, card));
+        cardsByKey[key] = card;
+      }
+      addProgressBar(card, key, entry.pageCount, progress);
+    }
+  } catch (error) {
+    console.error('Could not read cover cache', error);
   }
-  if (cached.length === 0) return;
-
-  libraryEmpty.style.display = 'none';
-  libraryGrid.style.display = 'grid';
-
-  const progress = loadProgress();
-
-  cached.forEach((entry) => {
-    const card = buildCard(parseComicTitle(entry.title), entry.key);
-    const cover = card.querySelector('.comic-cover');
-    cover.innerHTML = '';
-    const img = document.createElement('img');
-    const url = URL.createObjectURL(entry.blob);
-    img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
-    cover.appendChild(img);
-    cover.classList.add('needs-reselect');
-
-    const badge = document.createElement('div');
-    badge.className = 'reselect-badge';
-    badge.textContent = 'Tap to open';
-    cover.appendChild(badge);
-
-    addProgressBar(card, entry.key, entry.pageCount, progress);
-
-    card.addEventListener('click', () => onCardClick(entry.key, card));
-    libraryGrid.appendChild(card);
-    cardsByKey[entry.key] = card;
-  });
+  refreshCompletedRow();
 }
 
 function buildCard(title, key) {
@@ -513,6 +518,7 @@ function buildCard(title, key) {
 
 function addProgressBar(card, key, pageCount, progress) {
   card.dataset.pageCount = pageCount;
+  if (!Number.isSafeInteger(pageCount) || pageCount < 1) return;
   const history = loadHistory();
   history[key] = { ...history[key], title: card.querySelector('.comic-title').textContent, pageCount };
   if (pageCount > 0 && progress[key] >= pageCount - 1) history[key].completed = true;
@@ -524,7 +530,7 @@ function addProgressBar(card, key, pageCount, progress) {
     track.style.display = 'none';
     return;
   }
-  const pct = Math.round(((progress[key] + 1) / pageCount) * 100);
+  const pct = history[key]?.completed ? 100 : Math.min(100, Math.round(((progress[key] + 1) / pageCount) * 100));
   track.querySelector('.progress-track-fill').style.width = pct + '%';
   track.style.display = 'block';
 }
@@ -539,7 +545,7 @@ async function collectDeletionRecord(key) {
   let coverEntry = null;
   try {
     const all = await getAllCachedCovers();
-    coverEntry = all.find(c => c.key === key) || null;
+    coverEntry = all.find(c => canonicalComicKey(c.key, c.title) === key) || null;
   } catch (err) { /* ignore */ }
 
   const progress = loadProgress();
@@ -552,6 +558,7 @@ async function collectDeletionRecord(key) {
   delete history[key];
   saveHistory(history);
   const record = { key, coverEntry, progressValue, liveFile, historyEntry };
+  if (isCatalogKey(key)) setCatalogHidden(key, true);
 
   card.remove();
   delete cardsByKey[key];
@@ -562,8 +569,11 @@ async function collectDeletionRecord(key) {
   }
   try {
     const db = await getDB();
+    const entries = await getAllCachedCovers();
     const tx = db.transaction('covers', 'readwrite');
-    tx.objectStore('covers').delete(key);
+    for (const entry of entries) {
+      if (canonicalComicKey(entry.key, entry.title) === key) tx.objectStore('covers').delete(entry.key);
+    }
   } catch (err) { console.error('Could not remove cached cover', err); }
 
   return record;
@@ -605,6 +615,7 @@ function showUndoToast(count) {
 
 async function restoreComic(record) {
   const { key, coverEntry, progressValue, liveFile } = record;
+  if (isCatalogKey(key)) setCatalogHidden(key, false);
   if (record.historyEntry) {
     const history = loadHistory();
     history[key] = record.historyEntry;
@@ -618,7 +629,7 @@ async function restoreComic(record) {
     saveProgress(progress);
   }
 
-  if (!coverEntry) { renderHistoryCards(); return; }
+  if (isCatalogKey(key) || !coverEntry) { renderCatalog(); renderHistoryCards(); return; }
 
   try {
     await saveCoverToCache(coverEntry.key, coverEntry.title, coverEntry.blob, coverEntry.pageCount);
@@ -635,13 +646,7 @@ async function restoreComic(record) {
   img.src = url;
   img.onload = () => URL.revokeObjectURL(url);
   cover.appendChild(img);
-  if (!liveFile) {
-    cover.classList.add('needs-reselect');
-    const badge = document.createElement('div');
-    badge.className = 'reselect-badge';
-    badge.textContent = 'Tap to open';
-    cover.appendChild(badge);
-  }
+  addCardSelectionMark(cover);
   const progress = loadProgress();
   addProgressBar(card, key, coverEntry.pageCount, progress);
 
@@ -669,7 +674,7 @@ function handleCardTap(key) {
     openComic(liveFile);
   } else {
     pendingOpenKey = key;
-    statusEl.textContent = 'Select your comics again to continue reading…';
+    statusEl.textContent = `Choose ${cardsByKey[key]?.querySelector('.comic-title').textContent || 'this comic'} from your USB drive or Files…`;
     fileInput.click();
   }
 }
@@ -680,7 +685,12 @@ fileInput.addEventListener('change', async (e) => {
     if (newFiles.length === 0) return;
 
     const existingKeys = new Set(libraryFiles.map(f => comicKey(f)));
-    const filesToAdd = newFiles.filter(f => !existingKeys.has(comicKey(f)));
+    const filesToAdd = newFiles.filter(file => {
+      const key = comicKey(file);
+      if (existingKeys.has(key)) return false;
+      existingKeys.add(key);
+      return true;
+    });
 
     libraryFiles = libraryFiles.concat(filesToAdd);
     libraryEmpty.style.display = 'none';
@@ -691,6 +701,7 @@ fileInput.addEventListener('change', async (e) => {
     const cardsToLoad = [];
     filesToAdd.forEach((file) => {
       const key = comicKey(file);
+      if (isCatalogKey(key)) setCatalogHidden(key, false);
       let card = cardsByKey[key];
 
       if (!card) {
@@ -731,6 +742,10 @@ fileInput.addEventListener('change', async (e) => {
         openComic(match);
         return;
       }
+      const title = cardsByKey[pendingOpenKey]?.querySelector('.comic-title').textContent || 'that comic';
+      pendingOpenKey = null;
+      statusEl.textContent = `Those files do not include ${title}. Tap its cover and choose the matching comic file.`;
+      return;
     }
     statusEl.textContent = '';
   } catch (err) {
@@ -751,8 +766,8 @@ async function loadCoverThumbnail(file, card, coverEl, progress, key) {
     const img = document.createElement('img');
     img.src = url;
     img.onload = () => URL.revokeObjectURL(url);
-    coverEl.innerHTML = '';
-    coverEl.appendChild(img);
+    if (!isCatalogKey(key)) { coverEl.replaceChildren(img); addCardSelectionMark(coverEl); }
+    else URL.revokeObjectURL(url);
     addProgressBar(card, key, opened.pageNames.length, progress);
 
     file.__cachedArchive = opened;
@@ -761,6 +776,7 @@ async function loadCoverThumbnail(file, card, coverEl, progress, key) {
       .catch(err => console.error('Could not cache cover', err));
   } catch (err) {
     console.error('Cover failed for', file.name, err);
+    if (isCatalogKey(key)) return;
     coverEl.innerHTML = '<span style="font-size:11px;color:#666;padding:6px;text-align:center;">Couldn\'t read</span>';
   }
 }
@@ -1218,31 +1234,44 @@ function loadHistory() {
 function saveHistory(history) { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); }
 function refreshCompletedRow() {
   const history = loadHistory();
-  for (const [key, card] of Object.entries(cardsByKey)) {
-    const target = history[key]?.completed ? completedGrid : libraryGrid;
-    if (card.parentElement !== target) target.appendChild(card);
+  const query = document.getElementById('comic-search').value.trim().toLowerCase();
+  const numericQuery = /^\d+$/.test(query) ? Number(query) : null;
+  const entries = Object.entries(cardsByKey).sort(([a], [b]) => {
+    const ai = Number(a.match(/^archie:(\d+)$/)?.[1]);
+    const bi = Number(b.match(/^archie:(\d+)$/)?.[1]);
+    if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
+  for (const [key, card] of entries) {
+    card.hidden = numericQuery !== null ? key !== `archie:${numericQuery}` && archieIssue(card.querySelector('.comic-title').textContent) !== numericQuery
+      : !card.querySelector('.comic-title').textContent.toLowerCase().includes(query);
   }
-  document.getElementById('completed-section').hidden = !completedGrid.children.length;
-  libraryGrid.style.display = libraryGrid.children.length ? 'grid' : 'none';
+  for (const [target, completed] of [[libraryGrid, false], [completedGrid, true]]) {
+    const cards = entries.filter(([key]) => !!history[key]?.completed === completed).map(([, card]) => card);
+    cards.forEach((card, i) => { if (target.children[i] !== card) target.insertBefore(card, target.children[i] || null); });
+  }
+  document.getElementById('completed-section').hidden = ![...completedGrid.children].some(card => !card.hidden);
+  libraryGrid.style.display = [...libraryGrid.children].some(card => !card.hidden) ? 'grid' : 'none';
   libraryEmpty.style.display = Object.keys(cardsByKey).length ? 'none' : 'flex';
 }
+
 function renderHistoryCards() {
+  migrateReadingHistory();
+  renderCatalog();
   const progress = loadProgress();
   for (const [key, entry] of Object.entries(loadHistory())) {
-    if (cardsByKey[key]) continue;
-    const card = buildCard(entry.title, key);
-    const cover = card.querySelector('.comic-cover');
-    cover.classList.add('needs-reselect');
-    const badge = document.createElement('div');
-    badge.className = 'reselect-badge';
-    badge.textContent = 'Tap to open';
-    cover.appendChild(badge);
-    card.addEventListener('click', () => onCardClick(key, card));
-    cardsByKey[key] = card;
+    if (hiddenCatalogKeys().includes(key)) continue;
+    let card = cardsByKey[key];
+    if (!card) {
+      card = buildCard(entry.title, key);
+      card.addEventListener('click', () => onCardClick(key, card));
+      cardsByKey[key] = card;
+    }
     addProgressBar(card, key, entry.pageCount, progress);
   }
   refreshCompletedRow();
 }
+
 function downloadHistory() {
   const data = { app: 'usb-comic-reader', version: 1, savedAt: new Date().toISOString(), progress: loadProgress(), comics: loadHistory() };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
@@ -1293,10 +1322,6 @@ document.getElementById('history-input').addEventListener('change', async (event
     saveProgress(progress);
     saveHistory(history);
     renderHistoryCards();
-    for (const [key, card] of Object.entries(cardsByKey)) {
-      const count = history[key]?.pageCount || Number(card.dataset.pageCount);
-      if (count) addProgressBar(card, key, count, progress);
-    }
     refreshCompletedRow();
     statusEl.textContent = 'History restored. Select the original comic files to read them again. Newer progress was kept.';
   } catch (error) {
@@ -1306,8 +1331,70 @@ document.getElementById('history-input').addEventListener('change', async (event
 new MutationObserver(refreshCompletedRow).observe(libraryGrid, { childList: true });
 new MutationObserver(refreshCompletedRow).observe(completedGrid, { childList: true });
 
-function bootApp() {
-  renderCachedLibrary().then(renderHistoryCards);
+const CATALOG_HIDDEN_KEY = 'usbComicReaderHiddenCovers';
+const catalogIssues = new Set(typeof BUILTIN_ISSUES === 'undefined' ? [] : BUILTIN_ISSUES);
+function isCatalogKey(key) { return /^archie:\d+$/.test(key) && catalogIssues.has(Number(key.slice(7))); }
+function hiddenCatalogKeys() {
+  try { const value = JSON.parse(localStorage.getItem(CATALOG_HIDDEN_KEY)); return Array.isArray(value) ? value : []; } catch { return []; }
+}
+function setCatalogHidden(key, hidden) {
+  const keys = new Set(hiddenCatalogKeys());
+  if (hidden) keys.add(key); else keys.delete(key);
+  localStorage.setItem(CATALOG_HIDDEN_KEY, JSON.stringify([...keys]));
+}
+function addCardSelectionMark(cover) {
+  if (cover.querySelector('.selection-checkmark')) return;
+  const check = document.createElement('div');
+  check.className = 'selection-checkmark'; check.textContent = '✓'; cover.appendChild(check);
+}
+function renderCatalog() {
+  const hidden = new Set(hiddenCatalogKeys());
+  for (const issue of catalogIssues) {
+    const key = `archie:${issue}`;
+    if (cardsByKey[key] || hidden.has(key)) continue;
+    const card = buildCard(`Archie ${issue}`, key);
+    const cover = card.querySelector('.comic-cover');
+    const img = document.createElement('img');
+    img.src = `covers/archie-${issue}.jpg`;
+    img.alt = `Archie ${issue} cover`;
+    img.loading = 'lazy'; img.decoding = 'async';
+    cover.replaceChildren(img); addCardSelectionMark(cover);
+    card.addEventListener('click', () => onCardClick(key, card));
+    cardsByKey[key] = card;
+  }
+}
+function migrateReadingHistory() {
+  const oldProgress = loadProgress();
+  const oldHistory = loadHistory();
+  const progress = {};
+  const history = {};
+  for (const [key, value] of Object.entries(oldProgress)) {
+    const target = canonicalComicKey(key, oldHistory[key]?.title);
+    progress[target] = Math.max(progress[target] ?? 0, value);
+  }
+  for (const [key, entry] of Object.entries(oldHistory)) {
+    const target = canonicalComicKey(key, entry.title);
+    const previous = history[target];
+    history[target] = { ...entry, completed: !!(previous?.completed || entry.completed), pageCount: Math.max(previous?.pageCount || 0, entry.pageCount || 0) };
+  }
+  saveProgress(progress);
+  saveHistory(history);
+}
+document.getElementById('comic-search').addEventListener('input', refreshCompletedRow);
+fileInput.addEventListener('cancel', () => { pendingOpenKey = null; statusEl.textContent = ''; });
+let libraryBooted = false;
+async function bootApp() {
+  if (libraryBooted) return;
+  libraryBooted = true;
+  try {
+    migrateReadingHistory();
+    renderHistoryCards();
+    await renderCachedLibrary();
+    renderHistoryCards();
+  } catch (error) {
+    console.error(error);
+    statusEl.textContent = 'Could not load the library: ' + error.message;
+  }
 }
 
 if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {

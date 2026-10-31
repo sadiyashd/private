@@ -164,6 +164,17 @@
     padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   #selection-delete-btn:disabled { opacity: 0.4; }
+
+  #library-screen { overflow-y: auto; }
+  #library-header { flex-wrap: wrap; gap: 10px; }
+  #library-grid { flex: none; overflow: visible; }
+  #completed-section { padding: 0 20px 32px; }
+  #completed-grid { display: flex; gap: 16px; overflow-x: auto; padding: 4px 4px 16px; }
+  #completed-grid .comic-card { flex: 0 0 120px; }
+  #completed-grid.selecting .selection-checkmark { display: flex; }
+  .history-button { background: #25252b; color: white; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+  #done-btn { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); right: 20px; z-index: 12; background: #2b6fff; color: white; padding: 14px 22px; border: 0; border-radius: 12px; font-size: 17px; font-weight: 600; }
+  #done-btn[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -185,12 +196,21 @@
     </div>
     <input type="file" id="file-input" accept="application/octet-stream,.cbz,.cbr,.zip,.rar" multiple>
   </div>
-  <div id="status"></div>
+  <div style="display:flex;gap:8px;padding:10px 20px;flex-wrap:wrap;">
+    <button id="backup-history-btn" class="history-button">Save History Backup</button>
+    <button id="restore-history-btn" class="history-button">Restore History</button>
+    <input id="history-input" type="file" accept=".json,application/json" hidden>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
   <div id="library-empty">
     <p>Select .cbz and .cbr files straight from your USB drive. They stay on the drive — nothing is copied to this iPad.</p>
     <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;">Choose Comics</label>
   </div>
   <div id="library-grid" style="display:none;"></div>
+  <section id="completed-section" hidden>
+    <h2>Completed</h2>
+    <div id="completed-grid"></div>
+  </section>
   <div id="undo-toast">
     <span id="undo-toast-text">Comic removed</span>
     <button id="undo-toast-btn">Undo</button>
@@ -221,6 +241,7 @@
       </div>
     </div>
   </div>
+  <button id="done-btn" hidden>Done! · Save backup</button>
   <div id="loading-spinner">Loading page…</div>
   <div id="page-container">
     <img id="page-image-left" style="display:none;">
@@ -363,6 +384,7 @@ function enterSelectionMode() {
   selectionMode = true;
   selectedKeys.clear();
   libraryGrid.classList.add('selecting');
+  completedGrid.classList.add('selecting');
   selectionBar.classList.add('open');
   updateSelectionBar();
 }
@@ -371,6 +393,7 @@ function exitSelectionMode() {
   selectionMode = false;
   selectedKeys.clear();
   libraryGrid.classList.remove('selecting');
+  completedGrid.classList.remove('selecting');
   selectionBar.classList.remove('open');
   Object.values(cardsByKey).forEach(card => card.classList.remove('selected'));
 }
@@ -490,6 +513,12 @@ function buildCard(title, key) {
 }
 
 function addProgressBar(card, key, pageCount, progress) {
+  card.dataset.pageCount = pageCount;
+  const history = loadHistory();
+  history[key] = { ...history[key], title: card.querySelector('.comic-title').textContent, pageCount };
+  if (pageCount > 0 && progress[key] >= pageCount - 1) history[key].completed = true;
+  saveHistory(history);
+  queueMicrotask(refreshCompletedRow);
   const track = card.querySelector('.progress-track');
   if (!track) return;
   if (progress[key] === undefined || !pageCount || pageCount <= 1) {
@@ -519,7 +548,11 @@ async function collectDeletionRecord(key) {
   const liveFileIndex = libraryFiles.findIndex(f => comicKey(f) === key);
   const liveFile = liveFileIndex !== -1 ? libraryFiles[liveFileIndex] : null;
 
-  const record = { key, coverEntry, progressValue, liveFile };
+  const history = loadHistory();
+  const historyEntry = history[key];
+  delete history[key];
+  saveHistory(history);
+  const record = { key, coverEntry, progressValue, liveFile, historyEntry };
 
   card.remove();
   delete cardsByKey[key];
@@ -556,6 +589,7 @@ async function deleteComics(keys) {
     libraryEmpty.style.display = 'flex';
   }
 
+  refreshCompletedRow();
   showUndoToast(records.length);
 }
 
@@ -572,6 +606,11 @@ function showUndoToast(count) {
 
 async function restoreComic(record) {
   const { key, coverEntry, progressValue, liveFile } = record;
+  if (record.historyEntry) {
+    const history = loadHistory();
+    history[key] = record.historyEntry;
+    saveHistory(history);
+  }
 
   if (liveFile) libraryFiles.push(liveFile);
   if (progressValue !== undefined) {
@@ -580,7 +619,7 @@ async function restoreComic(record) {
     saveProgress(progress);
   }
 
-  if (!coverEntry) return;
+  if (!coverEntry) { renderHistoryCards(); return; }
 
   try {
     await saveCoverToCache(coverEntry.key, coverEntry.title, coverEntry.blob, coverEntry.pageCount);
@@ -930,6 +969,7 @@ async function preloadNextSpread(spreadIdx) {
 
 async function showSpread(spreadIdx) {
   if (spreadIdx < 0 || spreadIdx >= spreads.length) return;
+  document.getElementById('done-btn').hidden = true;
   currentSpreadIndex = spreadIdx;
   const myArchive = currentArchive;
   const myFile = currentFile;
@@ -989,6 +1029,15 @@ async function showSpread(spreadIdx) {
     const progress = loadProgress();
     progress[comicKey(myFile)] = pageIndices[0];
     saveProgress(progress);
+    if (pageIndices.includes(myArchive.pageNames.length - 1)) {
+      const history = loadHistory();
+      const key = comicKey(myFile);
+      history[key] = { ...history[key], title: parseComicTitle(myFile.name), pageCount: myArchive.pageNames.length, completed: true };
+      saveHistory(history);
+    }
+    const card = cardsByKey[comicKey(myFile)];
+    if (card) addProgressBar(card, comicKey(myFile), myArchive.pageNames.length, progress);
+    document.getElementById('done-btn').hidden = spreadIdx !== spreads.length - 1;
 
     preloadNextSpread(spreadIdx);
   } catch (err) {
@@ -1162,8 +1211,105 @@ window.addEventListener('unhandledrejection', (e) => {
   if (statusEl) statusEl.textContent = 'Something went wrong: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
 });
 
+const HISTORY_KEY = 'usbComicReaderHistory';
+const completedGrid = document.getElementById('completed-grid');
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || {}; } catch { return {}; }
+}
+function saveHistory(history) { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); }
+function refreshCompletedRow() {
+  const history = loadHistory();
+  for (const [key, card] of Object.entries(cardsByKey)) {
+    const target = history[key]?.completed ? completedGrid : libraryGrid;
+    if (card.parentElement !== target) target.appendChild(card);
+  }
+  document.getElementById('completed-section').hidden = !completedGrid.children.length;
+  libraryGrid.style.display = libraryGrid.children.length ? 'grid' : 'none';
+  libraryEmpty.style.display = Object.keys(cardsByKey).length ? 'none' : 'flex';
+}
+function renderHistoryCards() {
+  const progress = loadProgress();
+  for (const [key, entry] of Object.entries(loadHistory())) {
+    if (cardsByKey[key]) continue;
+    const card = buildCard(entry.title, key);
+    const cover = card.querySelector('.comic-cover');
+    cover.classList.add('needs-reselect');
+    const badge = document.createElement('div');
+    badge.className = 'reselect-badge';
+    badge.textContent = 'Tap to open';
+    cover.appendChild(badge);
+    card.addEventListener('click', () => onCardClick(key, card));
+    cardsByKey[key] = card;
+    addProgressBar(card, key, entry.pageCount, progress);
+  }
+  refreshCompletedRow();
+}
+function downloadHistory() {
+  const data = { app: 'usb-comic-reader', version: 1, savedAt: new Date().toISOString(), progress: loadProgress(), comics: loadHistory() };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'comic-history.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  statusEl.textContent = 'Backup requested. Save comic-history.json in Files; choose Replace if offered. If a duplicate is created, keep the newest backup.';
+}
+document.getElementById('backup-history-btn').addEventListener('click', downloadHistory);
+document.getElementById('done-btn').addEventListener('click', () => {
+  if (!currentFile || !currentArchive) return;
+  const key = comicKey(currentFile);
+  const progress = loadProgress();
+  progress[key] = currentArchive.pageNames.length - 1;
+  saveProgress(progress);
+  const history = loadHistory();
+  history[key] = { title: parseComicTitle(currentFile.name), pageCount: currentArchive.pageNames.length, completed: true };
+  saveHistory(history);
+  menuLibraryBtn.click();
+  refreshCompletedRow();
+  downloadHistory();
+});
+document.getElementById('restore-history-btn').addEventListener('click', () => document.getElementById('history-input').click());
+document.getElementById('history-input').addEventListener('change', async (event) => {
+  try {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) throw new Error('Backup is too large.');
+    const data = JSON.parse(await file.text());
+    const isMap = value => value && typeof value === 'object' && !Array.isArray(value);
+    const safeKey = key => !['__proto__', 'constructor', 'prototype'].includes(key);
+    if (data.app !== 'usb-comic-reader' || data.version !== 1 || !isMap(data.progress) || !isMap(data.comics)) throw new Error('Choose a Comic Reader history backup.');
+    for (const [key, page] of Object.entries(data.progress)) {
+      if (!safeKey(key) || !Number.isSafeInteger(page) || page < 0) throw new Error('Invalid reading progress.');
+    }
+    for (const [key, comic] of Object.entries(data.comics)) {
+      if (!safeKey(key) || !isMap(comic) || typeof comic.title !== 'string' || !Number.isSafeInteger(comic.pageCount) || comic.pageCount < 1 || (comic.completed !== undefined && typeof comic.completed !== 'boolean')) throw new Error('Invalid comic history.');
+    }
+    const progress = loadProgress();
+    const history = loadHistory();
+    for (const [key, page] of Object.entries(data.progress)) progress[key] = Math.max(progress[key] || 0, page);
+    for (const [key, comic] of Object.entries(data.comics)) {
+      history[key] = { title: comic.title, pageCount: comic.pageCount, completed: !!(history[key]?.completed || comic.completed) };
+    }
+    saveProgress(progress);
+    saveHistory(history);
+    renderHistoryCards();
+    for (const [key, card] of Object.entries(cardsByKey)) {
+      const count = history[key]?.pageCount || Number(card.dataset.pageCount);
+      if (count) addProgressBar(card, key, count, progress);
+    }
+    refreshCompletedRow();
+    statusEl.textContent = 'History restored. Select the original comic files to read them again. Newer progress was kept.';
+  } catch (error) {
+    statusEl.textContent = 'Could not restore history: ' + error.message;
+  } finally { event.target.value = ''; }
+});
+new MutationObserver(refreshCompletedRow).observe(libraryGrid, { childList: true });
+new MutationObserver(refreshCompletedRow).observe(completedGrid, { childList: true });
+
 function bootApp() {
-  renderCachedLibrary();
+  renderCachedLibrary().then(renderHistoryCards);
 }
 
 if (localStorage.getItem(GATE_UNLOCK_KEY) === 'true') {

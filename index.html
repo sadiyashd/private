@@ -204,6 +204,10 @@
   #preview-status { margin: 0; min-height: 18px; text-align: center; font-size: 14px; color: #aaa; flex-shrink: 0; }
   #preview-read { flex-shrink: 0; background: var(--unread-color); border: 0; color: white; border-radius: 12px; padding: 14px; font-size: 18px; font-weight: 600; cursor: pointer; }
   #preview-read.is-read { background: var(--read-color); }
+  #choose-comic-file { margin: 0 20px 12px; align-self: flex-start; }
+  #choose-comic-file[hidden], #cache-notice[hidden] { display: none; }
+  #cache-notice { position: fixed; top: max(16px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 80; display: flex; align-items: center; gap: 12px; width: min(90vw, 480px); background: #28282e; color: white; border: 1px solid #555; border-radius: 12px; padding: 14px; font-size: 14px; box-shadow: 0 4px 20px #0008; }
+  #cache-notice-close { background: none; color: white; border: 0; padding: 8px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -231,8 +235,9 @@
   </div>
   <input id="comic-search" type="search" placeholder="Find an issue…" aria-label="Find a comic by title or issue number">
   <div id="status" role="status" aria-live="polite"></div>
+  <button id="choose-comic-file" class="history-button" hidden>Choose comic file</button>
   <div id="library-empty">
-    <p>Select .cbz and .cbr files straight from your USB drive. They stay on the drive — nothing is copied to this iPad.</p>
+    <p>Select .cbz and .cbr files straight from your USB drive. Opened comics are kept on this iPad for two weeks after you last open them.</p>
     <label id="choose-btn-2" for="file-input" style="background:#2b6fff;color:white;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;">Choose Comics</label>
   </div>
   <div id="library-grid" style="display:none;"></div>
@@ -259,6 +264,11 @@
   <p id="preview-status" aria-live="polite"></p>
   <button id="preview-read">Read</button>
 </dialog>
+
+<div id="cache-notice" role="status" hidden>
+  <span id="cache-notice-text"></span>
+  <button id="cache-notice-close" aria-label="Dismiss storage message">✕</button>
+</div>
 
 <div id="selection-bar">
   <span id="selection-count">0 selected</span>
@@ -406,12 +416,27 @@ let dbPromise = null;
 function getDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open('usbComicReaderDB', 1);
+      const req = indexedDB.open('usbComicReaderDB', 2);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore('covers', { keyPath: 'key' });
+        const db = req.result;
+        if (!db.objectStoreNames.contains('covers')) db.createObjectStore('covers', { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('comics')) db.createObjectStore('comics', { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('comicCacheMetadata')) {
+          const metadata = db.createObjectStore('comicCacheMetadata', { keyPath: 'key' });
+          metadata.createIndex('expiresAt', 'expiresAt');
+        }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      let blocked = false;
+      req.onblocked = () => {
+        blocked = true;
+        reject(new Error('Close other Comic Reader tabs and reload to enable temporary comic storage.'));
+      };
+      req.onsuccess = () => {
+        if (blocked) { req.result.close(); dbPromise = null; return; }
+        req.result.onversionchange = () => { req.result.close(); dbPromise = null; };
+        resolve(req.result);
+      };
+      req.onerror = () => { dbPromise = null; reject(req.error); };
     });
   }
   return dbPromise;
@@ -739,20 +764,48 @@ async function undoDelete() {
   }
 }
 
+let comicLookupRequestId = 0;
+function chooseComicFile(key, openPicker = true) {
+  pendingOpenKey = key;
+  const title = cardsByKey[key]?.querySelector('.comic-title').textContent || 'this comic';
+  statusEl.textContent = `Choose ${title} from your USB drive or Files…`;
+  document.getElementById('choose-comic-file').hidden = false;
+  // Called directly from a tap so iPad Safari permits the file picker.
+  if (openPicker) fileInput.click();
+}
 function handleCardTap(key) {
-  const liveFile = libraryFiles.find(f => comicKey(f) === key);
+  const lookupId = ++comicLookupRequestId;
+  document.getElementById('choose-comic-file').hidden = true;
+  const liveFile = libraryFiles.find(file => comicKey(file) === key);
   if (liveFile) {
     openComic(liveFile);
+  } else if ((cachedComicExpiries.get(key) || 0) > Date.now()) {
+    openCachedComic(key, lookupId);
   } else {
-    pendingOpenKey = key;
-    statusEl.textContent = `Choose ${cardsByKey[key]?.querySelector('.comic-title').textContent || 'this comic'} from your USB drive or Files…`;
-    fileInput.click();
+    chooseComicFile(key);
   }
 }
+async function openCachedComic(key, lookupId) {
+  statusEl.textContent = 'Opening saved comic…';
+  try {
+    const file = await readCachedComic(key);
+    if (lookupId !== comicLookupRequestId) return;
+    if (!file) { chooseComicFile(key, false); return; }
+    libraryFiles.push(file);
+    await openComic(file);
+  } catch {
+    if (lookupId !== comicLookupRequestId) return;
+    chooseComicFile(key, false);
+  }
+}
+document.getElementById('choose-comic-file').addEventListener('click', () => {
+  if (pendingOpenKey) fileInput.click();
+});
 
 fileInput.addEventListener('change', async (e) => {
   try {
     const newFiles = Array.from(e.target.files);
+    document.getElementById('choose-comic-file').hidden = true;
     if (newFiles.length === 0) return;
 
     const existingKeys = new Set(libraryFiles.map(f => comicKey(f)));
@@ -1012,10 +1065,12 @@ function spreadIndexForPage(pageNum) {
 }
 
 async function openComic(file) {
+  ++comicLookupRequestId;
   const myRequestId = ++openRequestId;
   statusEl.textContent = 'Opening ' + file.name + '…';
   try {
     const archive = await openArchive(file);
+    if (!archive.pageNames.length) throw new Error('This comic contains no readable images.');
     if (myRequestId !== openRequestId) return;
 
     currentArchive = archive;
@@ -1030,6 +1085,7 @@ async function openComic(file) {
     readerScreen.style.display = 'flex';
     statusEl.textContent = '';
     await showSpread(currentSpreadIndex);
+    if (myRequestId === openRequestId) void keepComicForTwoWeeks(file);
   } catch (err) {
     if (myRequestId !== openRequestId) return;
     console.error(err);
@@ -1424,6 +1480,7 @@ let previewKeys = [];
 let previewIndex = 0;
 let previewReturnFocus = null;
 function openCoverPreview(key) {
+  ++comicLookupRequestId;
   previewKeys = [...libraryGrid.children].filter(card => !card.hidden).map(card => card.dataset.key);
   previewIndex = previewKeys.indexOf(key);
   if (previewIndex < 0) { previewKeys = [key]; previewIndex = 0; }
@@ -1540,12 +1597,100 @@ function migrateReadingHistory() {
   saveHistory(history);
 }
 document.getElementById('comic-search').addEventListener('input', refreshLibrary);
-fileInput.addEventListener('cancel', () => { pendingOpenKey = null; statusEl.textContent = ''; });
+fileInput.addEventListener('cancel', () => { pendingOpenKey = null; statusEl.textContent = ''; document.getElementById('choose-comic-file').hidden = true; });
+// Archive copies expire independently of covers and reading history. No count cap.
+const COMIC_CACHE_DURATION = 14 * 24 * 60 * 60 * 1000;
+const cachedComicExpiries = new Map();
+const savedComicFiles = new WeakSet();
+function showComicCacheWarning(error) {
+  const message = error?.name === 'QuotaExceededError'
+    ? 'There is not enough space to keep this comic on your iPad. You can keep reading; choose its file again next time.'
+    : error?.message?.startsWith('Close other Comic Reader') ? error.message
+    : 'This comic could not be saved on your iPad. You can keep reading; choose its file again next time.';
+  document.getElementById('cache-notice-text').textContent = message;
+  document.getElementById('cache-notice').hidden = false;
+}
+document.getElementById('cache-notice-close').addEventListener('click', () => { document.getElementById('cache-notice').hidden = true; });
+async function refreshComicCache() {
+  const db = await getDB();
+  const now = Date.now();
+  const metadata = await new Promise((resolve, reject) => {
+    const tx = db.transaction(['comics', 'comicCacheMetadata'], 'readwrite');
+    const store = tx.objectStore('comicCacheMetadata');
+    const expired = store.index('expiresAt').openCursor(IDBKeyRange.upperBound(now));
+    expired.onsuccess = () => {
+      const cursor = expired.result;
+      if (!cursor) return;
+      tx.objectStore('comics').delete(cursor.primaryKey);
+      cursor.delete();
+      cursor.continue();
+    };
+    const request = store.getAll();
+    let entries = [];
+    request.onsuccess = () => { entries = request.result; };
+    tx.oncomplete = () => resolve(entries.filter(entry => entry.expiresAt > now));
+    tx.onabort = () => reject(tx.error || new Error('Temporary storage unavailable.'));
+    tx.onerror = () => reject(tx.error);
+  });
+  for (const [key, expiry] of cachedComicExpiries) { if (expiry <= now) cachedComicExpiries.delete(key); }
+  metadata.forEach(entry => cachedComicExpiries.set(entry.key, Math.max(entry.expiresAt, cachedComicExpiries.get(entry.key) || 0)));
+}
+async function keepComicForTwoWeeks(file) {
+  try {
+    await refreshComicCache();
+    const db = await getDB();
+    const key = comicKey(file);
+    const now = Date.now();
+    const expiresAt = now + COMIC_CACHE_DURATION;
+    const alreadySaved = savedComicFiles.has(file) && cachedComicExpiries.has(key);
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(['comics', 'comicCacheMetadata'], 'readwrite');
+      if (!alreadySaved) tx.objectStore('comics').put({ key, blob: file, name: file.name, type: file.type, lastModified: file.lastModified });
+      tx.objectStore('comicCacheMetadata').put({ key, lastOpenedAt: now, expiresAt });
+      tx.oncomplete = resolve;
+      tx.onabort = () => reject(tx.error || new Error('Temporary storage unavailable.'));
+      tx.onerror = () => reject(tx.error);
+    });
+    savedComicFiles.add(file);
+    cachedComicExpiries.set(key, expiresAt);
+  } catch (error) { showComicCacheWarning(error); }
+}
+async function readCachedComic(key) {
+  const db = await getDB();
+  const result = await new Promise((resolve, reject) => {
+    const tx = db.transaction(['comics', 'comicCacheMetadata'], 'readwrite');
+    const metadata = tx.objectStore('comicCacheMetadata');
+    const comics = tx.objectStore('comics');
+    const request = metadata.get(key);
+    let entry = null;
+    request.onsuccess = () => {
+      if (!request.result || request.result.expiresAt <= Date.now()) {
+        metadata.delete(key); comics.delete(key); return;
+      }
+      const archive = comics.get(key);
+      archive.onsuccess = () => { entry = archive.result || null; };
+    };
+    tx.oncomplete = () => resolve(entry);
+    tx.onabort = () => reject(tx.error || new Error('Temporary storage unavailable.'));
+    tx.onerror = () => reject(tx.error);
+  });
+  if (!result) { cachedComicExpiries.delete(key); return null; }
+  const file = new File([result.blob], result.name, { type: result.type, lastModified: result.lastModified });
+  savedComicFiles.add(file);
+  return file;
+}
+// A closed website cannot run timers; expired copies are also pruned on startup.
+setInterval(() => { if (libraryBooted) void refreshComicCache().catch(() => {}); }, 15 * 60 * 1000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && libraryBooted) void refreshComicCache().catch(() => {});
+});
+
 let libraryBooted = false;
 async function bootApp() {
   if (libraryBooted) return;
   libraryBooted = true;
   try {
+    try { await refreshComicCache(); } catch (error) { showComicCacheWarning(error); }
     migrateReadingHistory();
     renderHistoryCards();
     await renderCachedLibrary();

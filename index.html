@@ -33,11 +33,14 @@
   #library-empty p { max-width: 300px; font-size: 14px; margin: 0; }
   #library-grid {
     flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    display: grid; grid-template-columns: repeat(4, 1fr);
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px; padding: 16px 20px 40px;
   }
   @media (orientation: landscape) {
-    #library-grid { grid-template-columns: repeat(6, 1fr); }
+    #library-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+  @media (max-width: 600px) {
+    #library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   .comic-card { cursor: pointer; }
   .comic-cover {
@@ -45,7 +48,7 @@
     display: flex; align-items: center; justify-content: center; overflow: hidden;
     position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
   }
-  .comic-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .comic-cover img { width: 100%; height: 100%; object-fit: contain; }
   .comic-cover .spinner-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
   .comic-cover.needs-reselect { opacity: 0.55; }
   .comic-cover .reselect-badge {
@@ -174,7 +177,7 @@
   #library-grid { flex: none; overflow: visible; }
   #completed-section { padding: 0 20px 32px; }
   #completed-grid { display: flex; gap: 16px; overflow-x: auto; padding: 4px 4px 16px; }
-  #completed-grid .comic-card { flex: 0 0 120px; }
+  #completed-grid .comic-card { flex: 0 0 clamp(180px, 28vw, 360px); }
   #completed-grid.selecting .selection-checkmark { display: flex; }
   .history-button { background: #25252b; color: white; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
   #done-btn { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); right: 20px; z-index: 12; background: #2b6fff; color: white; padding: 14px 22px; border: 0; border-radius: 12px; font-size: 17px; font-weight: 600; }
@@ -1355,7 +1358,7 @@ function renderCatalog() {
     const card = buildCard(`Archie ${issue}`, key);
     const cover = card.querySelector('.comic-cover');
     const img = document.createElement('img');
-    img.src = `covers/archie-${issue}.jpg`;
+    img.src = `covers/archie-${issue}.jpg?v=original`;
     img.alt = `Archie ${issue} cover`;
     img.loading = 'lazy'; img.decoding = 'async';
     cover.replaceChildren(img); addCardSelectionMark(cover);

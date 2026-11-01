@@ -1412,18 +1412,38 @@ function renderHistoryCards() {
   refreshLibrary();
 }
 
-function downloadHistory() {
-  const data = { app: 'usb-comic-reader', version: 1, savedAt: new Date().toISOString(), progress: loadProgress(), comics: loadHistory() };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+function downloadHistoryFile(file) {
+  const url = URL.createObjectURL(file);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'comic-history.json';
+  link.download = file.name;
   document.body.appendChild(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  statusEl.textContent = 'Backup requested. Save comic-history.json in Files; choose Replace if offered. If a duplicate is created, keep the newest backup.';
+  statusEl.textContent = 'Backup requested. If a preview opens, choose Share → Save to Files → On My iPad.';
 }
+async function saveHistoryBackup() {
+  const data = { app: 'usb-comic-reader', version: 1, savedAt: new Date().toISOString(), progress: loadProgress(), comics: loadHistory() };
+  const file = new File([JSON.stringify(data, null, 2)], 'comic-history.json', { type: 'application/json' });
+  let canShareFile = false;
+  try { canShareFile = !!(navigator.share && navigator.canShare?.({ files: [file] })); } catch { /* Use the download fallback. */ }
+  if (canShareFile) {
+    try {
+      // Call before any await so iPad Safari retains the Done tap's user activation.
+      await navigator.share({ files: [file], title: 'Comic reading history' });
+      statusEl.textContent = 'Reading progress saved. A backup file is kept only if you chose Save to Files.';
+      return;
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        statusEl.textContent = 'Backup sharing cancelled. Reading progress is still saved on this iPad.';
+        return;
+      }
+    }
+  }
+  downloadHistoryFile(file);
+}
+
 document.getElementById('done-btn').addEventListener('click', () => {
   if (!currentFile || !currentArchive) return;
   const key = comicKey(currentFile);
@@ -1435,7 +1455,7 @@ document.getElementById('done-btn').addEventListener('click', () => {
   saveHistory(history);
   menuLibraryBtn.click();
   refreshLibrary();
-  downloadHistory();
+  void saveHistoryBackup();
 });
 document.getElementById('restore-history-btn').addEventListener('click', () => document.getElementById('history-input').click());
 document.getElementById('history-input').addEventListener('change', async (event) => {

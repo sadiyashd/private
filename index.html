@@ -256,7 +256,7 @@
   <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
 </svg>
       </button>
-      <button id="library-recent-btn" class="icon-btn" aria-label="Recently Read" title="Recently Read" aria-pressed="false">
+      <button id="library-recent-btn" class="icon-btn" aria-label="Reading history" title="Reading history" aria-pressed="false">
         <svg class="lucide lucide-eye" aria-hidden="true" focusable="false"
   xmlns="http://www.w3.org/2000/svg"
   width="24"
@@ -329,8 +329,8 @@
   </div>
   <div id="library-grid" style="display:none;"></div>
   <section id="recent-section" hidden>
-    <h2>Recently Read</h2>
-    <p id="recent-empty" hidden>No finished comics yet.</p>
+    <h2>Reading history</h2>
+    <p id="recent-empty" hidden>No reading history yet.</p>
     <div id="recent-grid"></div>
   </section>
   <div id="undo-toast">
@@ -1471,13 +1471,6 @@ function refreshLibrary() {
   const query = document.getElementById('comic-search').value.trim().toLowerCase();
   const numericQuery = /^\d+$/.test(query) ? Number(query) : null;
   const entries = Object.entries(cardsByKey).sort(([a], [b]) => {
-    const aReading = isInProgress(a);
-    const bReading = isInProgress(b);
-    if (aReading !== bReading) return aReading ? -1 : 1;
-    if (aReading && bReading) {
-      const lastReadDifference = (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0);
-      if (lastReadDifference) return lastReadDifference;
-    }
     const ai = Number(a.match(/^archie:(\d+)$/)?.[1]);
     const bi = Number(b.match(/^archie:(\d+)$/)?.[1]);
     if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;
@@ -1491,7 +1484,7 @@ function refreshLibrary() {
     card.classList.toggle('is-read', !!history[key]?.completed);
     if (libraryGrid.children[i] !== card) libraryGrid.insertBefore(card, libraryGrid.children[i] || null);
   });
-  const recent = entries.filter(([key]) => history[key]?.completed)
+  const recent = entries.filter(([key]) => history[key]?.completed || isInProgress(key))
     .sort(([a], [b]) => (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0));
   const recentCards = recent.map(([key, card]) => {
     const copy = card.cloneNode(true);
@@ -1505,7 +1498,7 @@ function refreshLibrary() {
   recentGrid.replaceChildren(...recentCards);
   document.getElementById('recent-section').hidden = libraryView !== 'recent';
   document.getElementById('recent-empty').hidden = recentCards.some(card => !card.hidden);
-  document.getElementById('recent-empty').textContent = query ? 'No matching finished comics.' : 'No finished comics yet.';
+  document.getElementById('recent-empty').textContent = query ? 'No matching reading history.' : 'No reading history yet.';
   syncSelectionCards();
   libraryGrid.style.display = libraryView === 'home' && [...libraryGrid.children].some(card => !card.hidden) ? 'grid' : 'none';
   libraryEmpty.style.display = libraryView === 'home' && !Object.keys(cardsByKey).length ? 'flex' : 'none';

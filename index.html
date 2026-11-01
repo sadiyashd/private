@@ -193,7 +193,6 @@
   .history-button { background: #25252b; color: white; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
   #done-btn { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); right: 20px; z-index: 12; background: #2b6fff; color: white; padding: 14px 22px; border: 0; border-radius: 12px; font-size: 17px; font-weight: 600; }
   #done-btn[hidden] { display: none; }
-  #save-exit-btn { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); left: 20px; z-index: 12; background: #25252d; color: white; padding: 14px 18px; border: 1px solid #555; border-radius: 12px; font-size: 16px; cursor: pointer; }
   :root { --read-color: #269c68; --unread-color: #2b6fff; }
   .comic-card.is-read .progress-track-fill { background: var(--read-color); }
   #cover-preview { width: min(92vw, 760px); max-height: 94vh; max-height: 94dvh; padding: 18px; border: 1px solid #393940; border-radius: 18px; color: #eee; background: #141418; box-sizing: border-box; }
@@ -317,6 +316,21 @@
   <path d="M5 12h14" />
   <path d="M12 5v14" />
 </svg></button>
+      <button id="library-save-btn" class="icon-btn" aria-label="Save reading history backup" title="Save reading history"><svg class="lucide lucide-save" aria-hidden="true" focusable="false"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+  <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+  <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+</svg></button>
     </div>
     <input type="file" id="file-input" accept="application/octet-stream,.cbz,.cbr,.zip,.rar" multiple>
   </div>
@@ -393,7 +407,6 @@
       </div>
     </div>
   </div>
-  <button id="save-exit-btn">Save &amp; Exit</button>
   <button id="done-btn" hidden>Done</button>
   <div id="loading-spinner">Loading page…</div>
   <div id="page-container">
@@ -1553,13 +1566,7 @@ async function saveHistoryBackup() {
   downloadHistoryFile(file);
 }
 
-document.getElementById('save-exit-btn').addEventListener('click', () => {
-  if (!currentFile || !currentArchive) return;
-  // showSpread already persisted the last successfully displayed page.
-  menuLibraryBtn.click();
-  refreshLibrary();
-  void saveHistoryBackup();
-});
+document.getElementById('library-save-btn').addEventListener('click', () => { void saveHistoryBackup(); });
 document.getElementById('done-btn').addEventListener('click', () => {
   if (!currentFile || !currentArchive) return;
   const key = comicKey(currentFile);

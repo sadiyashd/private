@@ -214,6 +214,14 @@
   #choose-comic-file[hidden], #cache-notice[hidden] { display: none; }
   #cache-notice { position: fixed; top: max(16px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 80; display: flex; align-items: center; gap: 12px; width: min(90vw, 480px); background: #28282e; color: white; border: 1px solid #555; border-radius: 12px; padding: 14px; font-size: 14px; box-shadow: 0 4px 20px #0008; }
   #cache-notice-close { background: none; color: white; border: 0; padding: 8px; cursor: pointer; }
+  #startup-dialog { width: min(90vw, 440px); box-sizing: border-box; padding: 24px; border: 1px solid #414148; border-radius: 16px; color: #eee; background: #18181d; }
+  #startup-dialog::backdrop { background: rgba(0,0,0,.8); }
+  #startup-dialog h2 { margin: 0 0 12px; }
+  #startup-description { color: #bbb; line-height: 1.5; }
+  .startup-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  #startup-continue { background: #2b6fff; }
+  #startup-message { margin: 12px 0 0; color: #f3b0ae; font-size: 14px; }
+  #startup-message:empty { display: none; }
 </style>
 </head>
 <body>
@@ -333,6 +341,17 @@
     <button id="undo-toast-btn">Undo</button>
   </div>
 </div>
+
+<dialog id="startup-dialog" aria-labelledby="startup-title" aria-describedby="startup-description">
+  <h2 id="startup-title">Welcome back</h2>
+  <p id="startup-description"></p>
+  <div class="startup-actions">
+    <button id="startup-continue" class="history-button" autofocus>Continue</button>
+    <button id="startup-restore" class="history-button">Restore from backup</button>
+  </div>
+  <input id="startup-history-input" type="file" accept=".json,application/json" hidden>
+  <p id="startup-message" role="status" aria-live="polite"></p>
+</dialog>
 
 <dialog id="cover-preview" aria-labelledby="preview-title">
   <div id="preview-heading">
@@ -1600,11 +1619,30 @@ async function restoreHistoryFromInput(event) {
     renderHistoryCards();
     refreshLibrary();
     statusEl.textContent = 'History restored. Newer saved progress was kept. Choose the original comic files if they are not saved on this iPad.';
+    if (event.target.id === 'startup-history-input') document.getElementById('startup-dialog').close();
   } catch (error) {
     statusEl.textContent = 'Could not restore history: ' + error.message;
+    if (event.target.id === 'startup-history-input') document.getElementById('startup-message').textContent = statusEl.textContent;
   } finally { event.target.value = ''; }
 }
 document.getElementById('history-input').addEventListener('change', restoreHistoryFromInput);
+document.getElementById('startup-history-input').addEventListener('change', restoreHistoryFromInput);
+document.getElementById('startup-continue').addEventListener('click', () => document.getElementById('startup-dialog').close());
+document.getElementById('startup-restore').addEventListener('click', () => {
+  document.getElementById('startup-message').textContent = '';
+  document.getElementById('startup-history-input').click();
+});
+function showStartupHistoryStatus() {
+  const keys = new Set(Object.entries(loadProgress()).filter(([, page]) => Number.isSafeInteger(page) && page >= 0).map(([key]) => key));
+  for (const [key, comic] of Object.entries(loadHistory())) {
+    if (comic.completed || comic.lastReadAt > 0) keys.add(key);
+  }
+  document.getElementById('startup-description').textContent = keys.size
+    ? `Saved reading history found for ${keys.size} ${keys.size === 1 ? 'comic' : 'comics'} on this iPad. Continue or restore a backup.`
+    : 'No saved reading history found on this iPad. If you have a backup, restore it before reading. Otherwise, continue to start fresh.';
+  document.getElementById('startup-dialog').showModal();
+}
+
 
 new MutationObserver(refreshLibrary).observe(libraryGrid, { childList: true });
 
@@ -1846,6 +1884,7 @@ async function bootApp() {
     renderHistoryCards();
     await renderCachedLibrary();
     renderHistoryCards();
+    showStartupHistoryStatus();
   } catch (error) {
     console.error(error);
     statusEl.textContent = 'Could not load the library: ' + error.message;

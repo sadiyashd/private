@@ -177,14 +177,16 @@
   .comic-card[hidden] { display: none !important; }
   #library-grid { flex: none; overflow: visible; }
   #recent-section { padding: 0 20px 32px; }
-  #recent-grid { display: flex; gap: 12px; overflow-x: auto; padding: 4px 0 16px; }
-  #recent-grid .comic-card { flex: 0 0 calc((100vw - 88px) / 5); }
+  #recent-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px 12px; padding: 4px 0 16px; }
   @media (orientation: landscape) {
-    #recent-grid .comic-card { flex-basis: calc((100vw - 100px) / 6); }
+    #recent-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   }
   @media (max-width: 600px) {
-    #recent-grid .comic-card { flex-basis: calc((100vw - 64px) / 3); }
+    #recent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
+  #recent-empty { color: #aaa; }
+  #library-header { position: sticky; top: 0; z-index: 20; background: #0b0b0d; }
+  #library-home-btn[aria-pressed="true"], #library-recent-btn[aria-pressed="true"] { background: #34343d; }
   #recent-grid.selecting .selection-checkmark { display: flex; }
   .history-button { background: #25252b; color: white; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
   #done-btn { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); right: 20px; z-index: 12; background: #2b6fff; color: white; padding: 14px 22px; border: 0; border-radius: 12px; font-size: 17px; font-weight: 600; }
@@ -222,8 +224,16 @@
 
 <div id="library-screen">
   <div id="library-header">
-    <h1>Prom's Comics</h1>
+    <div style="display:flex;gap:12px;align-items:center;">
+      <button id="library-home-btn" class="icon-btn" aria-label="Home" title="Home" aria-pressed="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-8H9v8H4a1 1 0 0 1-1-1Z"/></svg>
+      </button>
+      <h1>Prom's Comics</h1>
+    </div>
     <div style="display:flex; gap:8px; align-items:center;">
+      <button id="library-recent-btn" class="icon-btn" aria-label="Recently Read" title="Recently Read" aria-pressed="false">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
       <button id="library-trash-btn" class="icon-btn">🗑️</button>
       <button id="library-reload-btn" class="icon-btn">🔄</button>
       <label id="choose-btn" class="icon-btn" for="file-input">＋</label>
@@ -244,6 +254,7 @@
   <div id="library-grid" style="display:none;"></div>
   <section id="recent-section" hidden>
     <h2>Recently Read</h2>
+    <p id="recent-empty" hidden>No finished comics yet.</p>
     <div id="recent-grid"></div>
   </section>
   <div id="undo-toast">
@@ -733,7 +744,7 @@ async function restoreComic(record) {
   } catch (err) { console.error('Could not restore cached cover', err); }
 
   libraryEmpty.style.display = 'none';
-  libraryGrid.style.display = 'grid';
+  libraryGrid.style.display = libraryView === 'home' ? 'grid' : 'none';
 
   const card = buildCard(parseComicTitle(coverEntry.title), key);
   const cover = card.querySelector('.comic-cover');
@@ -819,7 +830,7 @@ fileInput.addEventListener('change', async (e) => {
 
     libraryFiles = libraryFiles.concat(filesToAdd);
     libraryEmpty.style.display = 'none';
-    libraryGrid.style.display = 'grid';
+    libraryGrid.style.display = libraryView === 'home' ? 'grid' : 'none';
 
     const progress = loadProgress();
 
@@ -1355,6 +1366,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 const HISTORY_KEY = 'usbComicReaderHistory';
 const recentGrid = document.getElementById('recent-grid');
+let libraryView = 'home';
 function loadHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || {}; } catch { return {}; }
 }
@@ -1389,10 +1401,12 @@ function refreshLibrary() {
     return copy;
   });
   recentGrid.replaceChildren(...recentCards);
-  document.getElementById('recent-section').hidden = !recentCards.some(card => !card.hidden);
+  document.getElementById('recent-section').hidden = libraryView !== 'recent';
+  document.getElementById('recent-empty').hidden = recentCards.some(card => !card.hidden);
+  document.getElementById('recent-empty').textContent = query ? 'No matching finished comics.' : 'No finished comics yet.';
   syncSelectionCards();
-  libraryGrid.style.display = [...libraryGrid.children].some(card => !card.hidden) ? 'grid' : 'none';
-  libraryEmpty.style.display = Object.keys(cardsByKey).length ? 'none' : 'flex';
+  libraryGrid.style.display = libraryView === 'home' && [...libraryGrid.children].some(card => !card.hidden) ? 'grid' : 'none';
+  libraryEmpty.style.display = libraryView === 'home' && !Object.keys(cardsByKey).length ? 'flex' : 'none';
 }
 
 function renderHistoryCards() {
@@ -1502,7 +1516,8 @@ let previewIndex = 0;
 let previewReturnFocus = null;
 function openCoverPreview(key) {
   ++comicLookupRequestId;
-  previewKeys = [...libraryGrid.children].filter(card => !card.hidden).map(card => card.dataset.key);
+  const previewSource = libraryView === 'recent' ? recentGrid : libraryGrid;
+  previewKeys = [...previewSource.children].filter(card => !card.hidden).map(card => card.dataset.key);
   previewIndex = previewKeys.indexOf(key);
   if (previewIndex < 0) { previewKeys = [key]; previewIndex = 0; }
   previewReturnFocus = document.activeElement;
@@ -1617,6 +1632,17 @@ function migrateReadingHistory() {
   saveProgress(progress);
   saveHistory(history);
 }
+function showLibraryView(view) {
+  if (selectionMode) exitSelectionMode();
+  libraryView = view;
+  document.getElementById('comic-search').value = '';
+  document.getElementById('library-home-btn').setAttribute('aria-pressed', String(view === 'home'));
+  document.getElementById('library-recent-btn').setAttribute('aria-pressed', String(view === 'recent'));
+  refreshLibrary();
+  libraryScreen.scrollTop = 0;
+}
+document.getElementById('library-home-btn').addEventListener('click', () => showLibraryView('home'));
+document.getElementById('library-recent-btn').addEventListener('click', () => showLibraryView('recent'));
 document.getElementById('comic-search').addEventListener('input', refreshLibrary);
 fileInput.addEventListener('cancel', () => { pendingOpenKey = null; statusEl.textContent = ''; document.getElementById('choose-comic-file').hidden = true; });
 // Archive copies expire independently of covers and reading history. No count cap.

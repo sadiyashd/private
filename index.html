@@ -222,6 +222,10 @@
   #startup-continue { background: #2b6fff; }
   #startup-message { margin: 12px 0 0; color: #f3b0ae; font-size: 14px; }
   #startup-message:empty { display: none; }
+  #startup-dialog { max-height: 90vh; max-height: 90dvh; overflow-y: auto; }
+  #startup-reading-summary h3 { font-size: 16px; margin: 18px 0 8px; }
+  #startup-reading-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
+  #startup-reading-list li { padding: 9px 0; border-bottom: 1px solid #333; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -345,6 +349,10 @@
 <dialog id="startup-dialog" aria-labelledby="startup-title" aria-describedby="startup-description">
   <h2 id="startup-title">Welcome back</h2>
   <p id="startup-description"></p>
+  <section id="startup-reading-summary" hidden>
+    <h3>Currently Reading</h3>
+    <ul id="startup-reading-list"></ul>
+  </section>
   <div class="startup-actions">
     <button id="startup-continue" class="history-button" autofocus>Continue</button>
     <button id="startup-restore" class="history-button">Restore from backup</button>
@@ -1633,13 +1641,31 @@ document.getElementById('startup-restore').addEventListener('click', () => {
   document.getElementById('startup-history-input').click();
 });
 function showStartupHistoryStatus() {
-  const keys = new Set(Object.entries(loadProgress()).filter(([, page]) => Number.isSafeInteger(page) && page >= 0).map(([key]) => key));
-  for (const [key, comic] of Object.entries(loadHistory())) {
+  const progress = loadProgress();
+  const history = loadHistory();
+  const keys = new Set(Object.entries(progress).filter(([, page]) => Number.isSafeInteger(page) && page >= 0).map(([key]) => key));
+  for (const [key, comic] of Object.entries(history)) {
     if (comic.completed || comic.lastReadAt > 0) keys.add(key);
   }
+  const unfinished = [...keys].filter(key => !history[key]?.completed)
+    .sort((a, b) => (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0));
+  const finished = keys.size - unfinished.length;
   document.getElementById('startup-description').textContent = keys.size
-    ? `Saved reading history found for ${keys.size} ${keys.size === 1 ? 'comic' : 'comics'} on this iPad. Continue or restore a backup.`
+    ? `Saved history found: ${unfinished.length} currently reading, ${finished} finished. Continue or restore a backup.`
     : 'No saved reading history found on this iPad. If you have a backup, restore it before reading. Otherwise, continue to start fresh.';
+  const rows = unfinished.map(key => {
+    const row = document.createElement('li');
+    const title = cardsByKey[key]?.querySelector('.comic-title').textContent || history[key]?.title || key;
+    const savedPage = progress[key];
+    const count = history[key]?.pageCount;
+    const position = Number.isSafeInteger(savedPage) && savedPage >= 0
+      ? `Page ${savedPage + 1}${Number.isSafeInteger(count) && count >= savedPage + 1 ? ` of ${count}` : ''}`
+      : 'Saved page unavailable — restore a backup';
+    row.textContent = `${title} — ${position}`;
+    return row;
+  });
+  document.getElementById('startup-reading-list').replaceChildren(...rows);
+  document.getElementById('startup-reading-summary').hidden = !rows.length;
   document.getElementById('startup-dialog').showModal();
 }
 

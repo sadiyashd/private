@@ -175,7 +175,7 @@
 
   #library-screen { overflow-y: auto; }
   #library-header { flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
-  #comic-search { margin: 0 20px 8px; padding: 12px; border: 1px solid #444; border-radius: 10px; background: #18181c; color: white; font: inherit; }
+  #comic-search { margin: 12px 20px 8px; padding: 12px; border: 1px solid #444; border-radius: 10px; background: #18181c; color: white; font: inherit; }
   .comic-card[hidden] { display: none !important; }
   #library-grid { flex: none; overflow: visible; }
   #recent-section { padding: 0 20px 32px; }
@@ -217,15 +217,12 @@
   #startup-dialog { width: min(90vw, 440px); box-sizing: border-box; padding: 24px; border: 1px solid #414148; border-radius: 16px; color: #eee; background: #18181d; }
   #startup-dialog::backdrop { background: rgba(0,0,0,.8); }
   #startup-dialog h2 { margin: 0 0 12px; }
-  #startup-description { color: #bbb; line-height: 1.5; }
+  #startup-description { color: #bbb; line-height: 1.8; white-space: pre-line; }
   .startup-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
   #startup-continue { background: #2b6fff; }
   #startup-message { margin: 12px 0 0; color: #f3b0ae; font-size: 14px; }
   #startup-message:empty { display: none; }
   #startup-dialog { max-height: 90vh; max-height: 90dvh; overflow-y: auto; }
-  #startup-reading-summary h3 { font-size: 16px; margin: 18px 0 8px; }
-  #startup-reading-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
-  #startup-reading-list li { padding: 9px 0; border-bottom: 1px solid #333; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -323,10 +320,6 @@
     </div>
     <input type="file" id="file-input" accept="application/octet-stream,.cbz,.cbr,.zip,.rar" multiple>
   </div>
-  <div style="display:flex;gap:8px;padding:10px 20px;flex-wrap:wrap;">
-    <button id="restore-history-btn" class="history-button">Restore History</button>
-    <input id="history-input" type="file" accept=".json,application/json" hidden>
-  </div>
   <input id="comic-search" type="search" placeholder="Find an issue…" aria-label="Find a comic by title or issue number">
   <div id="status" role="status" aria-live="polite"></div>
   <button id="choose-comic-file" class="history-button" hidden>Choose comic file</button>
@@ -349,10 +342,6 @@
 <dialog id="startup-dialog" aria-labelledby="startup-title" aria-describedby="startup-description">
   <h2 id="startup-title">Welcome back</h2>
   <p id="startup-description"></p>
-  <section id="startup-reading-summary" hidden>
-    <h3>Currently Reading</h3>
-    <ul id="startup-reading-list"></ul>
-  </section>
   <div class="startup-actions">
     <button id="startup-continue" class="history-button" autofocus>Continue</button>
     <button id="startup-restore" class="history-button">Restore from backup</button>
@@ -1581,7 +1570,6 @@ document.getElementById('done-btn').addEventListener('click', () => {
   refreshLibrary();
   void saveHistoryBackup();
 });
-document.getElementById('restore-history-btn').addEventListener('click', () => document.getElementById('history-input').click());
 async function restoreHistoryFromInput(event) {
   try {
     const file = event.target.files[0];
@@ -1633,7 +1621,6 @@ async function restoreHistoryFromInput(event) {
     if (event.target.id === 'startup-history-input') document.getElementById('startup-message').textContent = statusEl.textContent;
   } finally { event.target.value = ''; }
 }
-document.getElementById('history-input').addEventListener('change', restoreHistoryFromInput);
 document.getElementById('startup-history-input').addEventListener('change', restoreHistoryFromInput);
 document.getElementById('startup-continue').addEventListener('click', () => document.getElementById('startup-dialog').close());
 document.getElementById('startup-restore').addEventListener('click', () => {
@@ -1651,21 +1638,8 @@ function showStartupHistoryStatus() {
     .sort((a, b) => (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0));
   const finished = keys.size - unfinished.length;
   document.getElementById('startup-description').textContent = keys.size
-    ? `Saved history found: ${unfinished.length} currently reading, ${finished} finished. Continue or restore a backup.`
-    : 'No saved reading history found on this iPad. If you have a backup, restore it before reading. Otherwise, continue to start fresh.';
-  const rows = unfinished.map(key => {
-    const row = document.createElement('li');
-    const title = cardsByKey[key]?.querySelector('.comic-title').textContent || history[key]?.title || key;
-    const savedPage = progress[key];
-    const count = history[key]?.pageCount;
-    const position = Number.isSafeInteger(savedPage) && savedPage >= 0
-      ? `Page ${savedPage + 1}${Number.isSafeInteger(count) && count >= savedPage + 1 ? ` of ${count}` : ''}`
-      : 'Saved page unavailable — restore a backup';
-    row.textContent = `${title} — ${position}`;
-    return row;
-  });
-  document.getElementById('startup-reading-list').replaceChildren(...rows);
-  document.getElementById('startup-reading-summary').hidden = !rows.length;
+    ? `Recently reading: ${finished}\nCurrently reading: ${unfinished.length}`
+    : 'No history found.';
   document.getElementById('startup-dialog').showModal();
 }
 

@@ -1465,9 +1465,19 @@ function loadHistory() {
 function saveHistory(history) { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); }
 function refreshLibrary() {
   const history = loadHistory();
+  const progress = loadProgress();
+  const isInProgress = key => !history[key]?.completed &&
+    ((Number.isSafeInteger(progress[key]) && progress[key] >= 0) || history[key]?.lastReadAt > 0);
   const query = document.getElementById('comic-search').value.trim().toLowerCase();
   const numericQuery = /^\d+$/.test(query) ? Number(query) : null;
   const entries = Object.entries(cardsByKey).sort(([a], [b]) => {
+    const aReading = isInProgress(a);
+    const bReading = isInProgress(b);
+    if (aReading !== bReading) return aReading ? -1 : 1;
+    if (aReading && bReading) {
+      const lastReadDifference = (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0);
+      if (lastReadDifference) return lastReadDifference;
+    }
     const ai = Number(a.match(/^archie:(\d+)$/)?.[1]);
     const bi = Number(b.match(/^archie:(\d+)$/)?.[1]);
     if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi;

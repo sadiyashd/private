@@ -130,6 +130,12 @@
   #nav-menu-panel button .icon { font-size: 18px; width: 22px; text-align: center; }
   #nav-menu-panel button.active { background: #2b6fff; }
   #nav-menu-panel button:active { background: rgba(255,255,255,0.1); }
+  #zoom-controls {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  #zoom-controls button { width: auto; white-space: nowrap; }
+  #zoom-controls button:disabled { opacity: 0.4; cursor: default; }
+  #zoom-level { min-width: 4ch; text-align: center; font-size: 14px; font-variant-numeric: tabular-nums; }
   #stretch-panel {
     display: none; padding: 12px 14px 8px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 4px;
   }
@@ -406,7 +412,11 @@
     <div id="nav-menu-panel">
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
-      <button id="menu-zoom-btn" aria-pressed="false"><span class="icon" aria-hidden="true">⊕</span> Zoom</button>
+      <div id="zoom-controls">
+        <button id="zoom-out-btn" aria-label="Zoom out" disabled>Zoom −</button>
+        <output id="zoom-level" aria-label="Zoom level">100%</output>
+        <button id="zoom-in-btn" aria-label="Zoom in">Zoom +</button>
+      </div>
       <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
       <button id="menu-reload-btn"><span class="icon">🔄</span> Reload App</button>
       <div id="stretch-panel">
@@ -1136,9 +1146,13 @@ const pageImageLeft = document.getElementById('page-image-left');
 const pageImageRight = document.getElementById('page-image-right');
 const loadingSpinner = document.getElementById('loading-spinner');
 const navMenuOverlay = document.getElementById('nav-menu-overlay');
-const menuZoomBtn = document.getElementById('menu-zoom-btn');
-const READER_ZOOM = 1.15;
-let readerZoomed = false;
+const zoomOutBtn = document.getElementById('zoom-out-btn');
+const zoomInBtn = document.getElementById('zoom-in-btn');
+const zoomLevel = document.getElementById('zoom-level');
+const ZOOM_STEP = 5;
+const MIN_ZOOM = 100;
+const MAX_ZOOM = 125;
+let readerZoom = MIN_ZOOM;
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
 
@@ -1244,7 +1258,7 @@ async function showSpread(spreadIdx) {
   const myFile = currentFile;
   const myRequestId = openRequestId;
   const pageIndices = spreads[spreadIdx];
-  const wasZoomed = readerZoomed;
+  const zoomBeforeLoad = readerZoom;
   const center = zoomedPageCenter();
   const panX = pageViewport.scrollLeft - center.x;
   const panY = pageViewport.scrollTop - center.y;
@@ -1296,7 +1310,7 @@ async function showSpread(spreadIdx) {
 
     if (myRequestId !== openRequestId) { clearTimeout(timer); return; }
     layoutPages();
-    if (wasZoomed === readerZoomed) centerZoomedPage(panX, panY);
+    if (zoomBeforeLoad === readerZoom) centerZoomedPage(panX, panY);
     else centerZoomedPage();
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
@@ -1333,8 +1347,8 @@ function waitForImageLoad(img) {
 const SPREAD_GAP_PX = 12;
 
 function layoutPages() {
-  const zoomed = readerZoomed;
-  const zoom = zoomed ? READER_ZOOM : 1;
+  const zoomed = readerZoom > MIN_ZOOM;
+  const zoom = readerZoom / 100;
   pageViewport.classList.toggle('zoomed', zoomed);
 
   const images = [pageImageLeft, pageImageRight].filter(image => image.style.display !== 'none');
@@ -1372,17 +1386,22 @@ function zoomedPageCenter() {
 }
 
 function centerZoomedPage(panX = 0, panY = 0) {
-  if (!readerZoomed) return;
+  if (readerZoom === MIN_ZOOM) return;
   const center = zoomedPageCenter();
   pageViewport.scrollTo(center.x + panX, center.y + panY);
 }
 
-function setReaderZoom(zoomed) {
-  readerZoomed = zoomed;
-  menuZoomBtn.setAttribute('aria-pressed', String(zoomed));
-  menuZoomBtn.classList.toggle('active', zoomed);
+function setReaderZoom(percent) {
+  const center = zoomedPageCenter();
+  const panX = pageViewport.scrollLeft - center.x;
+  const panY = pageViewport.scrollTop - center.y;
+
+  readerZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, percent));
+  zoomLevel.value = readerZoom + '%';
+  zoomOutBtn.disabled = readerZoom === MIN_ZOOM;
+  zoomInBtn.disabled = readerZoom === MAX_ZOOM;
   layoutPages();
-  centerZoomedPage();
+  centerZoomedPage(panX, panY);
 }
 
 const STRETCH_KEY = 'usbComicReaderStretchCorrections';
@@ -1414,10 +1433,8 @@ readerScreen.addEventListener('click', (event) => {
   else openNavMenu();
 });
 
-menuZoomBtn.addEventListener('click', () => {
-  setReaderZoom(!readerZoomed);
-  closeNavMenu();
-});
+zoomOutBtn.addEventListener('click', () => setReaderZoom(readerZoom - ZOOM_STEP));
+zoomInBtn.addEventListener('click', () => setReaderZoom(readerZoom + ZOOM_STEP));
 
 menuSpreadBtn.addEventListener('click', () => {
   spreadModeEnabled = !spreadModeEnabled;
@@ -1476,7 +1493,7 @@ menuLibraryBtn.addEventListener('click', () => {
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   preloadedBlobs = {};
-  setReaderZoom(false);
+  setReaderZoom(MIN_ZOOM);
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 

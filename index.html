@@ -89,7 +89,12 @@
   #reader-screen {
     display: none; height: 100%; position: relative;
     align-items: center; justify-content: center; background: #000;
+    padding-top: env(safe-area-inset-top);
   }
+  #page-viewport {
+    width: 100%; height: 100%; overflow: hidden; overscroll-behavior: contain;
+  }
+  #page-viewport.zoomed { overflow: auto; }
   #page-container {
     display: flex; align-items: center; justify-content: center;
     width: 100%; height: 100%; gap: 12px;
@@ -99,9 +104,12 @@
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
   }
   #page-container img { display: block; }
-  #tap-left, #tap-right { position: absolute; top: 0; bottom: 0; width: 33%; z-index: 5; }
-  #tap-left { left: 0; } #tap-right { right: 0; }
-  #tap-center { position: absolute; top: 0; bottom: 0; left: 33%; right: 33%; z-index: 5; }
+  #page-viewport.zoomed #page-container {
+    width: max-content; height: max-content; min-width: 100%; min-height: 100%;
+  }
+  #page-viewport.zoomed #page-container img {
+    flex: none; max-width: none; max-height: none; object-fit: fill;
+  }
   #nav-menu-overlay {
     display: none; position: absolute; inset: 0; z-index: 15;
     background: rgba(0,0,0,0.4);
@@ -396,6 +404,7 @@
     <div id="nav-menu-panel">
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
+      <button id="menu-zoom-btn"><span class="icon" aria-hidden="true">⊕</span> <span id="menu-zoom-label">Zoom In +</span></button>
       <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
       <button id="menu-reload-btn"><span class="icon">🔄</span> Reload App</button>
       <div id="stretch-panel">
@@ -409,13 +418,12 @@
   </div>
   <button id="done-btn" hidden>Done</button>
   <div id="loading-spinner">Loading page…</div>
-  <div id="page-container">
-    <img id="page-image-left" style="display:none;">
-    <img id="page-image-right" style="display:none;">
+  <div id="page-viewport">
+    <div id="page-container">
+      <img id="page-image-left" draggable="false" style="display:none;">
+      <img id="page-image-right" draggable="false" style="display:none;">
+    </div>
   </div>
-  <div id="tap-left"></div>
-  <div id="tap-center"></div>
-  <div id="tap-right"></div>
 </div>
 
 <script>
@@ -1120,12 +1128,16 @@ function getPageBlobFromArchive(archive, name) {
 
 const libraryScreen = document.getElementById('library-screen');
 const readerScreen = document.getElementById('reader-screen');
+const pageViewport = document.getElementById('page-viewport');
 const pageContainer = document.getElementById('page-container');
 const pageImageLeft = document.getElementById('page-image-left');
 const pageImageRight = document.getElementById('page-image-right');
 const loadingSpinner = document.getElementById('loading-spinner');
 const navMenuOverlay = document.getElementById('nav-menu-overlay');
-const navMenuPanel = document.getElementById('nav-menu-panel');
+const menuZoomBtn = document.getElementById('menu-zoom-btn');
+const menuZoomLabel = document.getElementById('menu-zoom-label');
+const READER_ZOOM = 1.5;
+let readerZoomed = false;
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
 
@@ -1272,14 +1284,14 @@ async function showSpread(spreadIdx) {
         clearTimeout(timer);
         return;
       }
-      reflowSpread();
     } else {
       pageImageRight.style.display = 'none';
       await waitForImageLoad(pageImageLeft);
-      applyStretchCorrection();
     }
 
     if (myRequestId !== openRequestId) { clearTimeout(timer); return; }
+    layoutPages();
+    pageViewport.scrollTo(0, 0);
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
 
@@ -1314,31 +1326,41 @@ function waitForImageLoad(img) {
 
 const SPREAD_GAP_PX = 12;
 
-function reflowSpread() {
-  if (pageImageRight.style.display === 'none') return;
-  const w1 = pageImageLeft.naturalWidth, h1 = pageImageLeft.naturalHeight;
-  const w2 = pageImageRight.naturalWidth, h2 = pageImageRight.naturalHeight;
-  if (!w1 || !h1 || !w2 || !h2) return;
+function layoutPages() {
+  const images = pageImageRight.style.display === 'none'
+    ? [pageImageLeft]
+    : [pageImageLeft, pageImageRight];
+  const { scaleX, scaleY } = getStretchForCurrentComic();
+  for (const image of images) {
+    image.style.width = '';
+    image.style.height = '';
+    image.style.transform = readerZoomed || (scaleX === 1 && scaleY === 1)
+      ? ''
+      : `scale(${scaleX}, ${scaleY})`;
+  }
 
-  const containerRect = pageContainer.getBoundingClientRect();
-  const containerStyle = getComputedStyle(pageContainer);
-  const paddingBottom = parseFloat(containerStyle.paddingBottom) || 0;
-  const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
-  const cw = containerRect.width - SPREAD_GAP_PX;
-  const ch = containerRect.height - paddingBottom - paddingTop;
+  if (images.length === 1 && !readerZoomed) return;
+  if (images.some(image => !image.naturalWidth || !image.naturalHeight)) return;
 
-  const combinedAspectWidthAtHeight1 = (w1 / h1) + (w2 / h2);
-  let targetHeight = Math.min(ch, cw / combinedAspectWidthAtHeight1);
+  const viewport = pageViewport.getBoundingClientRect();
+  const paddingBottom = parseFloat(getComputedStyle(pageContainer).paddingBottom) || 0;
+  const spreadGap = images.length === 2 ? SPREAD_GAP_PX : 0;
+  const aspectRatios = images.map(image => image.naturalWidth / image.naturalHeight);
+  const totalAspectRatio = aspectRatios.reduce((total, aspectRatio) => total + aspectRatio, 0);
+  const fitHeight = Math.min(viewport.height - paddingBottom, (viewport.width - spreadGap) / totalAspectRatio);
+  const zoom = readerZoomed ? READER_ZOOM : 1;
+  images.forEach((image, index) => {
+    image.style.width = fitHeight * aspectRatios[index] * zoom * (readerZoomed ? scaleX : 1) + 'px';
+    image.style.height = fitHeight * zoom * (readerZoomed ? scaleY : 1) + 'px';
+  });
+}
 
-  const width1 = targetHeight * (w1 / h1);
-  const width2 = targetHeight * (w2 / h2);
-
-  pageImageLeft.style.width = width1 + 'px';
-  pageImageLeft.style.height = targetHeight + 'px';
-  pageImageRight.style.width = width2 + 'px';
-  pageImageRight.style.height = targetHeight + 'px';
-
-  applyStretchCorrection();
+function setReaderZoom(zoomed) {
+  readerZoomed = zoomed;
+  pageViewport.classList.toggle('zoomed', zoomed);
+  menuZoomLabel.textContent = zoomed ? 'Fit to Screen' : 'Zoom In +';
+  layoutPages();
+  pageViewport.scrollTo(0, 0);
 }
 
 const STRETCH_KEY = 'usbComicReaderStretchCorrections';
@@ -1357,27 +1379,22 @@ function setStretchForCurrentComic(scaleX, scaleY) {
   map[comicKey(currentFile)] = { scaleX, scaleY };
   saveStretchCorrections(map);
 }
-function applyStretchCorrection() {
-  const { scaleX, scaleY } = getStretchForCurrentComic();
-  const transform = `scale(${scaleX}, ${scaleY})`;
-  pageImageLeft.style.transform = transform;
-  if (pageImageRight.style.display !== 'none') pageImageRight.style.transform = transform;
-}
-
 window.addEventListener('resize', () => {
-  if (currentArchive && spreads[currentSpreadIndex] && spreads[currentSpreadIndex].length === 2) {
-    reflowSpread();
-  }
+  if (readerScreen.style.display === 'flex') layoutPages();
 });
 
-document.getElementById('tap-left').addEventListener('click', () => showSpread(currentSpreadIndex - 1));
-document.getElementById('tap-right').addEventListener('click', () => showSpread(currentSpreadIndex + 1));
-document.getElementById('tap-center').addEventListener('click', () => {
-  if (navMenuOverlay.classList.contains('open')) {
-    closeNavMenu();
-  } else {
-    openNavMenu();
-  }
+readerScreen.addEventListener('click', (event) => {
+  if (!pageViewport.contains(event.target) && event.target !== readerScreen) return;
+  const viewport = pageViewport.getBoundingClientRect();
+  const position = (event.clientX - viewport.left) / viewport.width;
+  if (position < 0.33) showSpread(currentSpreadIndex - 1);
+  else if (position > 0.67) showSpread(currentSpreadIndex + 1);
+  else openNavMenu();
+});
+
+menuZoomBtn.addEventListener('click', () => {
+  setReaderZoom(!readerZoomed);
+  closeNavMenu();
 });
 
 menuSpreadBtn.addEventListener('click', () => {
@@ -1419,7 +1436,7 @@ function handleStretchSliderInput() {
   stretchXValue.textContent = stretchXSlider.value + '%';
   stretchYValue.textContent = stretchYSlider.value + '%';
   setStretchForCurrentComic(scaleX, scaleY);
-  applyStretchCorrection();
+  layoutPages();
 }
 stretchXSlider.addEventListener('input', handleStretchSliderInput);
 stretchYSlider.addEventListener('input', handleStretchSliderInput);
@@ -1437,6 +1454,7 @@ menuLibraryBtn.addEventListener('click', () => {
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   preloadedBlobs = {};
+  setReaderZoom(false);
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 

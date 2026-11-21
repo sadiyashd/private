@@ -663,7 +663,8 @@ selectionCancelBtn.addEventListener('click', exitSelectionMode);
 selectionDeleteBtn.addEventListener('click', async () => {
   const keysToDelete = [...selectedKeys];
   exitSelectionMode();
-  await deleteComics(keysToDelete);
+  if (libraryView === 'recent') removeFromReadingHistory(keysToDelete);
+  else await deleteComics(keysToDelete);
 });
 
 function onCardClick(key, card) {
@@ -747,18 +748,24 @@ function addProgressBar(card, key, pageCount, progress) {
   card.dataset.pageCount = pageCount;
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) return;
   const history = loadHistory();
-  history[key] = { ...history[key], title: card.querySelector('.comic-title').textContent, pageCount };
-  if (pageCount > 0 && progress[key] >= pageCount - 1) history[key].completed = true;
-  saveHistory(history);
+  const page = progress[key];
+  let entry = history[key];
+  // Loading a cover alone should not create a reading history entry.
+  if (entry || page !== undefined) {
+    entry = { ...entry, title: card.querySelector('.comic-title').textContent, pageCount };
+    if (page >= pageCount - 1) entry.completed = true;
+    history[key] = entry;
+    saveHistory(history);
+  }
   queueMicrotask(refreshLibrary);
   const track = card.querySelector('.progress-track');
   if (!track) return;
-  card.classList.toggle('is-read', !!history[key]?.completed);
-  if (!history[key]?.completed && (progress[key] === undefined || !pageCount || pageCount <= 1)) {
+  card.classList.toggle('is-read', !!entry?.completed);
+  if (!entry?.completed && (page === undefined || pageCount <= 1)) {
     track.style.display = 'none';
     return;
   }
-  const pct = history[key]?.completed ? 100 : Math.min(100, Math.round(((progress[key] + 1) / pageCount) * 100));
+  const pct = entry?.completed ? 100 : Math.min(100, Math.round(((page + 1) / pageCount) * 100));
   track.querySelector('.progress-track-fill').style.width = pct + '%';
   track.style.display = 'block';
 }
@@ -832,9 +839,28 @@ async function deleteComics(keys) {
   showUndoToast(records.length);
 }
 
-function showUndoToast(count) {
+function removeFromReadingHistory(keys) {
+  const history = loadHistory();
+  const progress = loadProgress();
+  lastDeleted = keys.map(key => {
+    const record = { key, historyEntry: history[key], progressValue: progress[key], historyOnly: true };
+    delete history[key];
+    delete progress[key];
+    return record;
+  });
+  saveHistory(history);
+  saveProgress(progress);
+  for (const key of keys) {
+    const card = cardsByKey[key];
+    if (card) addProgressBar(card, key, Number(card.dataset.pageCount), progress);
+  }
+  refreshLibrary();
+  showUndoToast(keys.length, ' from history');
+}
+
+function showUndoToast(count, context = '') {
   document.getElementById('undo-toast-text').textContent =
-    count > 1 ? `${count} comics removed` : 'Comic removed';
+    (count > 1 ? `${count} comics removed` : 'Comic removed') + context;
   clearTimeout(undoTimer);
   undoToast.classList.add('visible');
   undoTimer = setTimeout(() => {
@@ -845,6 +871,22 @@ function showUndoToast(count) {
 
 async function restoreComic(record) {
   const { key, coverEntry, progressValue, liveFile } = record;
+  if (record.historyOnly) {
+    const history = loadHistory();
+    const progress = loadProgress();
+    if (record.historyEntry && !history[key]) {
+      history[key] = record.historyEntry;
+      saveHistory(history);
+    }
+    if (progressValue !== undefined && progress[key] === undefined) {
+      progress[key] = progressValue;
+      saveProgress(progress);
+    }
+    const card = cardsByKey[key];
+    if (card) addProgressBar(card, key, Number(card.dataset.pageCount), progress);
+    refreshLibrary();
+    return;
+  }
   if (isCatalogKey(key)) setCatalogHidden(key, false);
   if (record.historyEntry) {
     const history = loadHistory();
@@ -954,8 +996,6 @@ fileInput.addEventListener('change', async (e) => {
     libraryEmpty.style.display = 'none';
     libraryGrid.style.display = libraryView === 'home' ? 'grid' : 'none';
 
-    const progress = loadProgress();
-
     const cardsToLoad = [];
     filesToAdd.forEach((file) => {
       const key = comicKey(file);
@@ -983,7 +1023,7 @@ fileInput.addEventListener('change', async (e) => {
     for (let i = 0; i < cardsToLoad.length; i++) {
       const { file, card, cover, key } = cardsToLoad[i];
       try {
-        await loadCoverThumbnail(file, card, cover, progress, key);
+        await loadCoverThumbnail(file, card, cover, key);
       } catch (err) {
         console.error('Failed to load cover for', file.name, err);
       }
@@ -1014,7 +1054,7 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
-async function loadCoverThumbnail(file, card, coverEl, progress, key) {
+async function loadCoverThumbnail(file, card, coverEl, key) {
   try {
     const opened = await openArchive(file);
     if (opened.pageNames.length === 0) return;
@@ -1026,7 +1066,7 @@ async function loadCoverThumbnail(file, card, coverEl, progress, key) {
     // Cover previews reuse this URL for the lifetime of the library card.
     if (!isCatalogKey(key)) { coverEl.replaceChildren(img); addCardSelectionMark(coverEl); }
     else URL.revokeObjectURL(url);
-    addProgressBar(card, key, opened.pageNames.length, progress);
+    addProgressBar(card, key, opened.pageNames.length, loadProgress());
 
     file.__cachedArchive = opened;
 
@@ -1845,6 +1885,10 @@ function migrateReadingHistory() {
 function showLibraryView(view) {
   if (selectionMode) exitSelectionMode();
   libraryView = view;
+  const trashLabel = view === 'recent' ? 'Remove from reading history' : 'Delete comics';
+  libraryTrashBtn.setAttribute('aria-label', trashLabel);
+  libraryTrashBtn.title = trashLabel;
+  selectionDeleteBtn.textContent = view === 'recent' ? 'Remove from History' : 'Delete';
   document.getElementById('comic-search').value = '';
   document.getElementById('library-home-btn').setAttribute('aria-pressed', String(view === 'home'));
   document.getElementById('library-recent-btn').setAttribute('aria-pressed', String(view === 'recent'));

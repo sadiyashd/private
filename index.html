@@ -104,8 +104,6 @@
     max-width: 100%; max-height: 100%; object-fit: contain; touch-action: manipulation;
   }
   #page-container img { display: block; }
-  .page-frame { display: contents; }
-  #page-viewport.zoomed .page-frame { display: block; flex: none; overflow: hidden; }
   #page-viewport.zoomed #page-container {
     width: max-content; height: max-content; min-width: 100%; min-height: 100%;
   }
@@ -120,7 +118,7 @@
   #nav-menu-overlay.open { display: flex; }
   #nav-menu-panel {
     background: rgba(24,24,26,0.97); border-radius: 18px; padding: 8px;
-    min-width: 220px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+    min-width: 220px; max-height: 90%; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.6);
   }
   #nav-menu-panel button {
     background: none; border: none; color: white; text-align: left;
@@ -130,6 +128,11 @@
   #nav-menu-panel button .icon { font-size: 18px; width: 22px; text-align: center; }
   #nav-menu-panel button.active { background: #2b6fff; }
   #nav-menu-panel button:active { background: rgba(255,255,255,0.1); }
+  #zoom-panel {
+    padding: 8px 16px 12px;
+  }
+  #zoom-panel label { display: flex; justify-content: space-between; font-size: 13px; }
+  #zoom-slider { width: 100%; height: 32px; margin: 0; }
   #stretch-panel {
     display: none; padding: 12px 14px 8px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 4px;
   }
@@ -406,7 +409,11 @@
     <div id="nav-menu-panel">
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
-      <button id="menu-zoom-btn"><span class="icon" aria-hidden="true">⊕</span> <span id="menu-zoom-label">Zoom In +</span></button>
+      <button id="menu-zoom-btn" aria-controls="zoom-panel" aria-expanded="false"><span class="icon" aria-hidden="true">⊕</span> Zoom In +</button>
+      <div id="zoom-panel" hidden>
+        <label for="zoom-slider">Zoom <output id="zoom-value" for="zoom-slider">100%</output></label>
+        <input type="range" id="zoom-slider" min="100" max="250" step="1" value="100">
+      </div>
       <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
       <button id="menu-reload-btn"><span class="icon">🔄</span> Reload App</button>
       <div id="stretch-panel">
@@ -422,8 +429,8 @@
   <div id="loading-spinner">Loading page…</div>
   <div id="page-viewport">
     <div id="page-container">
-      <div class="page-frame"><img id="page-image-left" draggable="false" style="display:none;"></div>
-      <div class="page-frame"><img id="page-image-right" draggable="false" style="display:none;"></div>
+      <img id="page-image-left" draggable="false" style="display:none;">
+      <img id="page-image-right" draggable="false" style="display:none;">
     </div>
   </div>
 </div>
@@ -1137,9 +1144,9 @@ const pageImageRight = document.getElementById('page-image-right');
 const loadingSpinner = document.getElementById('loading-spinner');
 const navMenuOverlay = document.getElementById('nav-menu-overlay');
 const menuZoomBtn = document.getElementById('menu-zoom-btn');
-const menuZoomLabel = document.getElementById('menu-zoom-label');
-const whiteMarginsByImage = new WeakMap();
-let readerZoomed = false;
+const zoomPanel = document.getElementById('zoom-panel');
+const zoomSlider = document.getElementById('zoom-slider');
+const zoomValue = document.getElementById('zoom-value');
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
 
@@ -1293,7 +1300,7 @@ async function showSpread(spreadIdx) {
 
     if (myRequestId !== openRequestId) { clearTimeout(timer); return; }
     layoutPages();
-    pageViewport.scrollTo(0, 0);
+    centerZoomedPage();
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
 
@@ -1328,69 +1335,23 @@ function waitForImageLoad(img) {
 
 const SPREAD_GAP_PX = 12;
 
-function readWhiteMargins(image) {
-  const cached = whiteMarginsByImage.get(image);
-  if (cached?.src === image.src) return cached.margins;
-
-  const margins = { top: 0, bottom: 0 };
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.min(image.naturalWidth, 512);
-  canvas.height = Math.min(image.naturalHeight, 2048);
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) return margins;
-
-  const { width, height } = canvas;
-  try {
-    context.fillStyle = '#fff';
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
-    const { data } = context.getImageData(0, 0, width, height);
-    function isWhiteRow(row) {
-      const start = row * width * 4;
-      const end = start + width * 4;
-      for (let pixel = start; pixel < end; pixel += 4) {
-        if (data[pixel] < 245 || data[pixel + 1] < 245 || data[pixel + 2] < 245) return false;
-      }
-      return true;
-    }
-
-    let top = 0;
-    while (top < height && isWhiteRow(top)) top++;
-    if (top < height) {
-      let end = height;
-      while (end > top && isWhiteRow(end - 1)) end--;
-      margins.top = top / height;
-      margins.bottom = (height - end) / height;
-    }
-  } catch {
-    // Keep the original framing if the image cannot be sampled.
-  }
-  whiteMarginsByImage.set(image, { src: image.src, margins });
-  return margins;
-}
-
 function layoutPages() {
-  const images = [pageImageLeft, pageImageRight].filter(image => image.style.display !== 'none');
-  const ready = images.length > 0 && images.every(image => image.complete && image.naturalWidth && image.naturalHeight);
-  const margins = readerZoomed && ready ? images.map(readWhiteMargins) : [];
-  const crop = margins.some(({ top, bottom }) => top > 0 || bottom > 0);
-  pageViewport.classList.toggle('zoomed', crop);
+  const zoom = zoomSlider.valueAsNumber / 100;
+  const zoomed = zoom > 1;
+  pageViewport.classList.toggle('zoomed', zoomed);
 
+  const images = [pageImageLeft, pageImageRight].filter(image => image.style.display !== 'none');
   const { scaleX, scaleY } = getStretchForCurrentComic();
-  for (const image of [pageImageLeft, pageImageRight]) {
-    const frame = image.parentElement;
-    frame.style.display = image.style.display === 'none' ? 'none' : '';
-    frame.style.width = '';
-    frame.style.height = '';
+  for (const image of images) {
     image.style.width = '';
     image.style.height = '';
-    image.style.marginTop = '';
-    image.style.transform = crop || (scaleX === 1 && scaleY === 1)
+    image.style.transform = zoomed || (scaleX === 1 && scaleY === 1)
       ? ''
       : `scale(${scaleX}, ${scaleY})`;
   }
 
-  if (!ready || (images.length === 1 && !crop)) return;
+  if (images.length === 0 || (images.length === 1 && !zoomed)) return;
+  if (images.some(image => !image.complete || !image.naturalWidth || !image.naturalHeight)) return;
 
   const viewport = pageViewport.getBoundingClientRect();
   const paddingBottom = parseFloat(getComputedStyle(pageContainer).paddingBottom) || 0;
@@ -1399,28 +1360,26 @@ function layoutPages() {
   const totalAspectRatio = aspectRatios.reduce((total, aspectRatio) => total + aspectRatio, 0);
   const maxHeight = images.length === 1 ? images[0].naturalHeight : Infinity;
   const fitHeight = Math.min(maxHeight, viewport.height - paddingBottom, (viewport.width - spreadGap) / totalAspectRatio);
-  const artworkHeights = margins.map(({ top, bottom }) => 1 - top - bottom);
-  // Keep both pages at the same scale and fit the taller artwork to the original height.
-  const zoom = crop ? 1 / Math.max(...artworkHeights) : 1;
 
   images.forEach((image, index) => {
-    const width = fitHeight * aspectRatios[index] * zoom * (crop ? scaleX : 1);
-    const height = fitHeight * zoom * (crop ? scaleY : 1);
-    image.style.width = width + 'px';
-    image.style.height = height + 'px';
-    if (crop) {
-      image.parentElement.style.width = width + 'px';
-      image.parentElement.style.height = height * artworkHeights[index] + 'px';
-      image.style.marginTop = -height * margins[index].top + 'px';
-    }
+    image.style.width = fitHeight * aspectRatios[index] * zoom * (zoomed ? scaleX : 1) + 'px';
+    image.style.height = fitHeight * zoom * (zoomed ? scaleY : 1) + 'px';
   });
 }
 
-function setReaderZoom(zoomed) {
-  readerZoomed = zoomed;
-  menuZoomLabel.textContent = zoomed ? 'Fit to Screen' : 'Zoom In +';
+function centerZoomedPage() {
+  if (zoomSlider.valueAsNumber === 100) return;
+  pageViewport.scrollTo(
+    (pageViewport.scrollWidth - pageViewport.clientWidth) / 2,
+    (pageViewport.scrollHeight - pageViewport.clientHeight) / 2
+  );
+}
+
+function updateReaderZoom() {
+  zoomValue.value = zoomSlider.value + '%';
+  zoomSlider.setAttribute('aria-valuetext', zoomValue.value);
   layoutPages();
-  pageViewport.scrollTo(0, 0);
+  centerZoomedPage();
 }
 
 const STRETCH_KEY = 'usbComicReaderStretchCorrections';
@@ -1453,9 +1412,10 @@ readerScreen.addEventListener('click', (event) => {
 });
 
 menuZoomBtn.addEventListener('click', () => {
-  setReaderZoom(!readerZoomed);
-  closeNavMenu();
+  zoomPanel.hidden = !zoomPanel.hidden;
+  menuZoomBtn.setAttribute('aria-expanded', String(!zoomPanel.hidden));
 });
+zoomSlider.addEventListener('input', updateReaderZoom);
 
 menuSpreadBtn.addEventListener('click', () => {
   spreadModeEnabled = !spreadModeEnabled;
@@ -1514,7 +1474,10 @@ menuLibraryBtn.addEventListener('click', () => {
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   preloadedBlobs = {};
-  setReaderZoom(false);
+  zoomSlider.value = zoomSlider.min;
+  updateReaderZoom();
+  zoomPanel.hidden = true;
+  menuZoomBtn.setAttribute('aria-expanded', 'false');
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 

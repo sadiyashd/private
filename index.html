@@ -1746,7 +1746,7 @@ function showStartupHistoryStatus() {
     .sort((a, b) => (history[b]?.lastReadAt || 0) - (history[a]?.lastReadAt || 0));
   const finished = keys.size - unfinished.length;
   document.getElementById('startup-description').textContent = keys.size
-    ? `Recently reading: ${finished}\nCurrently reading: ${unfinished.length}`
+    ? `Recently read: ${finished}\nCurrently reading: ${unfinished.length}`
     : 'No history found.';
   document.getElementById('startup-dialog').showModal();
 }

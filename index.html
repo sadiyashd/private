@@ -413,7 +413,7 @@
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
       <div id="zoom-controls">
-        <button id="zoom-out-btn" aria-label="Zoom out" disabled>Zoom −</button>
+        <button id="zoom-out-btn" aria-label="Zoom out">Zoom −</button>
         <output id="zoom-level" aria-label="Zoom level">100%</output>
         <button id="zoom-in-btn" aria-label="Zoom in">Zoom +</button>
       </div>
@@ -1150,9 +1150,10 @@ const zoomOutBtn = document.getElementById('zoom-out-btn');
 const zoomInBtn = document.getElementById('zoom-in-btn');
 const zoomLevel = document.getElementById('zoom-level');
 const ZOOM_STEP = 5;
-const MIN_ZOOM = 100;
+const MIN_ZOOM = 75;
+const FIT_ZOOM = 100;
 const MAX_ZOOM = 125;
-let readerZoom = MIN_ZOOM;
+let readerZoom = FIT_ZOOM;
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
 
@@ -1347,7 +1348,7 @@ function waitForImageLoad(img) {
 const SPREAD_GAP_PX = 12;
 
 function layoutPages() {
-  const zoomed = readerZoom > MIN_ZOOM;
+  const zoomed = readerZoom > FIT_ZOOM;
   const zoom = readerZoom / 100;
   pageViewport.classList.toggle('zoomed', zoomed);
 
@@ -1361,7 +1362,7 @@ function layoutPages() {
       : `scale(${scaleX}, ${scaleY})`;
   }
 
-  if (images.length === 0 || (images.length === 1 && !zoomed)) return;
+  if (images.length === 0 || (images.length === 1 && readerZoom === FIT_ZOOM)) return;
   if (images.some(image => !image.complete || !image.naturalWidth || !image.naturalHeight)) return;
 
   const viewport = pageViewport.getBoundingClientRect();
@@ -1386,7 +1387,7 @@ function zoomedPageCenter() {
 }
 
 function centerZoomedPage(panX = 0, panY = 0) {
-  if (readerZoom === MIN_ZOOM) return;
+  if (readerZoom <= FIT_ZOOM) return;
   const center = zoomedPageCenter();
   pageViewport.scrollTo(center.x + panX, center.y + panY);
 }
@@ -1493,7 +1494,7 @@ menuLibraryBtn.addEventListener('click', () => {
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   preloadedBlobs = {};
-  setReaderZoom(MIN_ZOOM);
+  setReaderZoom(FIT_ZOOM);
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 

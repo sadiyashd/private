@@ -1252,6 +1252,10 @@ async function showSpread(spreadIdx) {
   const myFile = currentFile;
   const myRequestId = openRequestId;
   const pageIndices = spreads[spreadIdx];
+  const zoom = zoomSlider.valueAsNumber;
+  const center = zoomedPageCenter();
+  const panX = pageViewport.scrollLeft - center.x;
+  const panY = pageViewport.scrollTop - center.y;
 
   loadingSpinner.textContent = 'Loading page…';
 
@@ -1300,7 +1304,8 @@ async function showSpread(spreadIdx) {
 
     if (myRequestId !== openRequestId) { clearTimeout(timer); return; }
     layoutPages();
-    centerZoomedPage();
+    if (zoom === zoomSlider.valueAsNumber) centerZoomedPage(panX, panY);
+    else centerZoomedPage();
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
 
@@ -1367,12 +1372,17 @@ function layoutPages() {
   });
 }
 
-function centerZoomedPage() {
+function zoomedPageCenter() {
+  return {
+    x: (pageViewport.scrollWidth - pageViewport.clientWidth) / 2,
+    y: (pageViewport.scrollHeight - pageViewport.clientHeight) / 2
+  };
+}
+
+function centerZoomedPage(panX = 0, panY = 0) {
   if (zoomSlider.valueAsNumber === 100) return;
-  pageViewport.scrollTo(
-    (pageViewport.scrollWidth - pageViewport.clientWidth) / 2,
-    (pageViewport.scrollHeight - pageViewport.clientHeight) / 2
-  );
+  const center = zoomedPageCenter();
+  pageViewport.scrollTo(center.x + panX, center.y + panY);
 }
 
 function updateReaderZoom() {

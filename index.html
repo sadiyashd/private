@@ -106,6 +106,8 @@
   #page-container img { display: block; }
   #page-viewport.zoomed #page-container {
     width: max-content; height: max-content; min-width: 100%; min-height: 100%;
+    /* Centering within this padding lowers the artwork by 20px. */
+    padding-top: 40px;
   }
   #page-viewport.zoomed #page-container img {
     flex: none; max-width: none; max-height: none; object-fit: fill;
@@ -128,11 +130,6 @@
   #nav-menu-panel button .icon { font-size: 18px; width: 22px; text-align: center; }
   #nav-menu-panel button.active { background: #2b6fff; }
   #nav-menu-panel button:active { background: rgba(255,255,255,0.1); }
-  #zoom-panel {
-    padding: 8px 16px 12px;
-  }
-  #zoom-panel label { display: flex; justify-content: space-between; font-size: 13px; }
-  #zoom-slider { width: 100%; height: 32px; margin: 0; }
   #stretch-panel {
     display: none; padding: 12px 14px 8px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 4px;
   }
@@ -409,11 +406,7 @@
     <div id="nav-menu-panel">
       <button id="menu-library-btn"><span class="icon">🏠</span> Library</button>
       <button id="menu-spread-btn"><span class="icon">📖</span> Two-Page Spread</button>
-      <button id="menu-zoom-btn" aria-controls="zoom-panel" aria-expanded="false"><span class="icon" aria-hidden="true">⊕</span> Zoom In +</button>
-      <div id="zoom-panel" hidden>
-        <label for="zoom-slider">Zoom <output id="zoom-value" for="zoom-slider">100%</output></label>
-        <input type="range" id="zoom-slider" min="100" max="250" step="1" value="100">
-      </div>
+      <button id="menu-zoom-btn" aria-pressed="false"><span class="icon" aria-hidden="true">⊕</span> Zoom</button>
       <button id="menu-stretch-btn"><span class="icon">↔️</span> Fix Stretching</button>
       <button id="menu-reload-btn"><span class="icon">🔄</span> Reload App</button>
       <div id="stretch-panel">
@@ -1144,9 +1137,8 @@ const pageImageRight = document.getElementById('page-image-right');
 const loadingSpinner = document.getElementById('loading-spinner');
 const navMenuOverlay = document.getElementById('nav-menu-overlay');
 const menuZoomBtn = document.getElementById('menu-zoom-btn');
-const zoomPanel = document.getElementById('zoom-panel');
-const zoomSlider = document.getElementById('zoom-slider');
-const zoomValue = document.getElementById('zoom-value');
+const READER_ZOOM = 1.15;
+let readerZoomed = false;
 const menuLibraryBtn = document.getElementById('menu-library-btn');
 const menuSpreadBtn = document.getElementById('menu-spread-btn');
 
@@ -1252,7 +1244,7 @@ async function showSpread(spreadIdx) {
   const myFile = currentFile;
   const myRequestId = openRequestId;
   const pageIndices = spreads[spreadIdx];
-  const zoom = zoomSlider.valueAsNumber;
+  const wasZoomed = readerZoomed;
   const center = zoomedPageCenter();
   const panX = pageViewport.scrollLeft - center.x;
   const panY = pageViewport.scrollTop - center.y;
@@ -1304,7 +1296,7 @@ async function showSpread(spreadIdx) {
 
     if (myRequestId !== openRequestId) { clearTimeout(timer); return; }
     layoutPages();
-    if (zoom === zoomSlider.valueAsNumber) centerZoomedPage(panX, panY);
+    if (wasZoomed === readerZoomed) centerZoomedPage(panX, panY);
     else centerZoomedPage();
     clearTimeout(timer);
     loadingSpinner.classList.remove('visible');
@@ -1341,8 +1333,8 @@ function waitForImageLoad(img) {
 const SPREAD_GAP_PX = 12;
 
 function layoutPages() {
-  const zoom = zoomSlider.valueAsNumber / 100;
-  const zoomed = zoom > 1;
+  const zoomed = readerZoomed;
+  const zoom = zoomed ? READER_ZOOM : 1;
   pageViewport.classList.toggle('zoomed', zoomed);
 
   const images = [pageImageLeft, pageImageRight].filter(image => image.style.display !== 'none');
@@ -1380,14 +1372,15 @@ function zoomedPageCenter() {
 }
 
 function centerZoomedPage(panX = 0, panY = 0) {
-  if (zoomSlider.valueAsNumber === 100) return;
+  if (!readerZoomed) return;
   const center = zoomedPageCenter();
   pageViewport.scrollTo(center.x + panX, center.y + panY);
 }
 
-function updateReaderZoom() {
-  zoomValue.value = zoomSlider.value + '%';
-  zoomSlider.setAttribute('aria-valuetext', zoomValue.value);
+function setReaderZoom(zoomed) {
+  readerZoomed = zoomed;
+  menuZoomBtn.setAttribute('aria-pressed', String(zoomed));
+  menuZoomBtn.classList.toggle('active', zoomed);
   layoutPages();
   centerZoomedPage();
 }
@@ -1422,10 +1415,9 @@ readerScreen.addEventListener('click', (event) => {
 });
 
 menuZoomBtn.addEventListener('click', () => {
-  zoomPanel.hidden = !zoomPanel.hidden;
-  menuZoomBtn.setAttribute('aria-expanded', String(!zoomPanel.hidden));
+  setReaderZoom(!readerZoomed);
+  closeNavMenu();
 });
-zoomSlider.addEventListener('input', updateReaderZoom);
 
 menuSpreadBtn.addEventListener('click', () => {
   spreadModeEnabled = !spreadModeEnabled;
@@ -1484,10 +1476,7 @@ menuLibraryBtn.addEventListener('click', () => {
   objectURLsInUse.forEach(u => URL.revokeObjectURL(u));
   objectURLsInUse = [];
   preloadedBlobs = {};
-  zoomSlider.value = zoomSlider.min;
-  updateReaderZoom();
-  zoomPanel.hidden = true;
-  menuZoomBtn.setAttribute('aria-expanded', 'false');
+  setReaderZoom(false);
   readerScreen.style.display = 'none';
   libraryScreen.style.display = 'flex';
 
